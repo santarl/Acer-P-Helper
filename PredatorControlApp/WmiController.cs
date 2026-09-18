@@ -329,12 +329,65 @@ namespace PredatorControlApp
             }
         }
 
+        // Keyboard backlight auto-off (30s idle) lives on a completely different
+        // WMI class than everything else in this file - APGeAction, not
+        // AcerGamingFunction. Confirmed live via:
+        //   Get-CimClass -Namespace root\wmi | ? { $_.CimClassQualifiers['guid'].Value -match '61EF69EA' }
+        // which resolved to APGeAction. Action codes (0x88401 read, 0x88402/
+        // 0x1E0000088402 write) come from the Linuwu-Sense Linux driver; the
+        // getter's exact bit encoding didn't match that driver's docs on this
+        // firmware, so state is tracked locally (BacklightTimeoutEnabled) rather
+        // than trusted from a hardware read - the write side was independently
+        // confirmed correct by observing the actual backlight behavior.
+        private ManagementObject? _cachedApgeObj;
+        private bool _backlightTimeoutEnabled;
+
+        private ManagementObject? GetApgeObject()
+        {
+            lock (_lock)
+            {
+                if (_cachedApgeObj != null) return _cachedApgeObj;
+                try
+                {
+                    using var searcher = new ManagementObjectSearcher(@"root\WMI", "SELECT * FROM APGeAction");
+                    using var results = searcher.Get();
+                    _cachedApgeObj = results.Cast<ManagementObject>().FirstOrDefault();
+                }
+                catch { _cachedApgeObj = null; }
+                return _cachedApgeObj;
+            }
+        }
+
+        public bool SetBacklightTimeout(bool enabled)
+        {
+            try
+            {
+                var obj = GetApgeObject();
+                if (obj == null) return false;
+
+                using var inParams = obj.GetMethodParameters("SetFunction");
+                inParams["uiInput"] = enabled ? (ulong)0x1E0000088402 : (ulong)0x88402;
+                using var outParams = obj.InvokeMethod("SetFunction", inParams, null);
+                uint result = Convert.ToUInt32(outParams["uiOutput"]);
+                if (result == 0) _backlightTimeoutEnabled = enabled;
+                return result == 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public bool BacklightTimeoutEnabled => _backlightTimeoutEnabled;
+
         public void Dispose()
         {
             lock (_lock)
             {
                 _cachedObj?.Dispose();
                 _cachedObj = null;
+                _cachedApgeObj?.Dispose();
+                _cachedApgeObj = null;
             }
         }
     }
