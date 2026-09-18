@@ -23,6 +23,20 @@ namespace PredatorControlApp
         private byte _direction = 0;   
         private int _lastMode = 3;     
 
+        // Static mode supports genuinely independent colors per keyboard zone
+        // (confirmed live: setting zone 0's bit alone changed only that zone,
+        // leaving the other three untouched). Zones are 0-indexed here in
+        // code (bit = 1 << zoneIndex when talking to SetGamingRgbKb); the
+        // firmware's own zone numbering starts at 1, handled in
+        // ApplyZoneColorRaw.
+        private readonly (byte R, byte G, byte B)[] _zoneColors =
+        {
+            (0, 150, 255), (0, 150, 255), (0, 150, 255), (0, 150, 255)
+        };
+
+        public (byte R, byte G, byte B) GetZoneColor(int zoneIndex) =>
+            zoneIndex >= 0 && zoneIndex < 4 ? _zoneColors[zoneIndex] : ((byte)0, (byte)0, (byte)0);
+
         private byte _customCpuFanSpeed = 50;
         private byte _customGpuFanSpeed = 50;
 
@@ -207,23 +221,41 @@ namespace PredatorControlApp
             ApplyLightingMode(_lastMode);
         }
 
+        private bool ApplyZoneColorRaw(int zoneIndex, byte r, byte g, byte b)
+        {
+            if (zoneIndex < 0 || zoneIndex > 3) return false;
+            _zoneColors[zoneIndex] = (r, g, b);
+            // "zone" is a 4-bit mask (bit0-3 = zones A-D), NOT a linear index.
+            // A loop sending raw values 1,2,3,4 only ever set bits 0,1,(0+1),2 -
+            // bit3 (zone D, value 8) was never reached, which is exactly why
+            // only 3 of 4 zones changed. One bit per call addresses exactly
+            // one zone independently.
+            return SendRgbKbCommand((uint)(1 << zoneIndex), r, g, b);
+        }
+
+        public bool SetZoneColor(int zoneIndex, byte r, byte g, byte b)
+        {
+            _lastMode = 0;
+            SendCommand("SetGamingLEDBehavior", 0x07ul);
+            Thread.Sleep(50);
+            return ApplyZoneColorRaw(zoneIndex, r, g, b);
+        }
+
         public bool SetStaticColor(byte r, byte g, byte b, byte brightness)
         {
-            _lastR = r; _lastG = g; _lastB = b;
+            // Applies the same color to all four zones - used by the single
+            // "quick color" picker for people who don't want to fuss with
+            // per-zone colors. SetZoneColor is the per-zone entry point.
             _brightness = brightness;
             _lastMode = 0;
 
-            // Static color is NOT an effect mode on SetGamingKBBacklight - it's a
-            // separate WMI call (confirmed live: gmInput = zone | (R<<8) | (G<<16) | (B<<24),
-            // zones are 1-4 on this keyboard). Using SetGamingKBBacklight with mode=0
-            // silently did nothing, which was the original bug.
             SendCommand("SetGamingLEDBehavior", 0x07ul);
             Thread.Sleep(50);
 
             bool allOk = true;
-            for (uint zone = 1; zone <= 4; zone++)
+            for (int zone = 0; zone < 4; zone++)
             {
-                allOk &= SendRgbKbCommand(zone, r, g, b);
+                allOk &= ApplyZoneColorRaw(zone, r, g, b);
                 Thread.Sleep(20);
             }
             return allOk;
@@ -233,7 +265,17 @@ namespace PredatorControlApp
         {
             if (mode == 0)
             {
-                SetStaticColor(_lastR, _lastG, _lastB, _brightness);
+                // Re-assert each zone's own stored color (not a single
+                // flattened color) - e.g. when brightness changes while in
+                // static mode with different colors per zone.
+                SendCommand("SetGamingLEDBehavior", 0x07ul);
+                Thread.Sleep(50);
+                for (int zone = 0; zone < 4; zone++)
+                {
+                    var (zr, zg, zb) = _zoneColors[zone];
+                    ApplyZoneColorRaw(zone, zr, zg, zb);
+                    Thread.Sleep(20);
+                }
                 return;
             }
 

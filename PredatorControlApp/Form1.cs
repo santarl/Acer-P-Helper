@@ -154,6 +154,7 @@ namespace PredatorControlApp
 
         private PredatorDropDown _rgbDropDown = null!;
         private PredatorButton _btnColorPick = null!;
+        private readonly PredatorButton[] _btnZoneColor = new PredatorButton[4];
 
         private PredatorSlider _brightnessSlider = null!, _speedSlider = null!;
         private PredatorSlider _cpuFanSlider = null!, _gpuFanSlider = null!;
@@ -879,9 +880,16 @@ namespace PredatorControlApp
                 if (mode == 0)
                 {
                     Color c = _colorPicker.Color;
-                    _wmi.SetRgbMode(0, c.R, c.G, c.B, (byte)_brightnessSlider.Value, GetMappedSpeed(), 0);
+                    _wmi.SetStaticColor(c.R, c.G, c.B, (byte)_brightnessSlider.Value);
                     SaveState("RGB_Mode", 0);
                     SaveState("RGB_R", c.R); SaveState("RGB_G", c.G); SaveState("RGB_B", c.B);
+                    for (int i = 0; i < 4; i++)
+                    {
+                        SaveState($"RGB_Zone{i}_R", c.R);
+                        SaveState($"RGB_Zone{i}_G", c.G);
+                        SaveState($"RGB_Zone{i}_B", c.B);
+                        _btnZoneColor[i]?.Invalidate();
+                    }
                 }
                 else ApplyRgbModeFromDropdown(mode);
                 UpdateRgbControls(mode);
@@ -909,14 +917,61 @@ namespace PredatorControlApp
                 if (_colorPicker.ShowDialog() == DialogResult.OK)
                 {
                     Color c = _colorPicker.Color;
-                    _wmi.SetRgbMode(0, c.R, c.G, c.B, (byte)_brightnessSlider.Value, GetMappedSpeed(), 0);
+                    _wmi.SetStaticColor(c.R, c.G, c.B, (byte)_brightnessSlider.Value);
                     _rgbDropDown.SelectedIndex = 0;
                     SaveState("RGB_Mode", 0);
                     SaveState("RGB_R", c.R); SaveState("RGB_G", c.G); SaveState("RGB_B", c.B);
+                    for (int i = 0; i < 4; i++)
+                    {
+                        SaveState($"RGB_Zone{i}_R", c.R);
+                        SaveState($"RGB_Zone{i}_G", c.G);
+                        SaveState($"RGB_Zone{i}_B", c.B);
+                    }
                     UpdateRgbControls(0);
                     CheckRgbTrayFromMode(0);
+                    for (int i = 0; i < 4; i++) _btnZoneColor[i].Invalidate();
                 }
             };
+
+            y += btnH + S(14);
+            int zoneBtnGap = S(8);
+            int zoneBtnW = (contentW - zoneBtnGap * 3) / 4;
+            for (int i = 0; i < 4; i++)
+            {
+                int zoneIndex = i; // capture for closures below
+                var btn = MakeButton($"Zone {i + 1}", pad + (zoneBtnW + zoneBtnGap) * i, y, zoneBtnW, btnH);
+                _btnZoneColor[i] = btn;
+
+                btn.Paint += (s, e) =>
+                {
+                    var g = e.Graphics;
+                    g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                    var (zr, zg, zb) = _wmi.GetZoneColor(zoneIndex);
+                    int cy = btn.Height / 2;
+                    int cx = S(16);
+                    using var brush = new SolidBrush(Color.FromArgb(zr, zg, zb));
+                    g.FillEllipse(brush, cx - S(6), cy - S(6), S(12), S(12));
+                };
+
+                btn.Click += (s, e) =>
+                {
+                    var (zr, zg, zb) = _wmi.GetZoneColor(zoneIndex);
+                    _colorPicker.Color = Color.FromArgb(zr, zg, zb);
+                    if (_colorPicker.ShowDialog() == DialogResult.OK)
+                    {
+                        Color c = _colorPicker.Color;
+                        _wmi.SetZoneColor(zoneIndex, c.R, c.G, c.B);
+                        _rgbDropDown.SelectedIndex = 0;
+                        SaveState("RGB_Mode", 0);
+                        SaveState($"RGB_Zone{zoneIndex}_R", c.R);
+                        SaveState($"RGB_Zone{zoneIndex}_G", c.G);
+                        SaveState($"RGB_Zone{zoneIndex}_B", c.B);
+                        UpdateRgbControls(0);
+                        CheckRgbTrayFromMode(0);
+                        btn.Invalidate();
+                    }
+                };
+            }
 
             y += btnH + S(28);
             AddSeparator(y);
@@ -971,6 +1026,8 @@ namespace PredatorControlApp
             bool hasSpeed = mode != 0;
             _speedSlider.Enabled = hasSpeed;
             _btnColorPick.Enabled = mode == 0;
+            for (int i = 0; i < 4; i++)
+                _btnZoneColor[i].Enabled = mode == 0;
         }
 
         private void MakeSectionHeader(string label, int x, int y)
@@ -1502,6 +1559,18 @@ namespace PredatorControlApp
                 int savedB = GetInt(key, "RGB_B", 255, 0, 255);
                 _colorPicker.Color = Color.FromArgb(savedR, savedG, savedB);
 
+                // Per-zone colors, falling back to the single legacy RGB_R/G/B
+                // color for any zone not yet saved individually (covers
+                // upgrades from before per-zone support existed).
+                var savedZoneColors = new (byte R, byte G, byte B)[4];
+                for (int i = 0; i < 4; i++)
+                {
+                    int zr = GetInt(key, $"RGB_Zone{i}_R", savedR, 0, 255);
+                    int zg = GetInt(key, $"RGB_Zone{i}_G", savedG, 0, 255);
+                    int zb = GetInt(key, $"RGB_Zone{i}_B", savedB, 0, 255);
+                    savedZoneColors[i] = ((byte)zr, (byte)zg, (byte)zb);
+                }
+
                 _brightnessSlider.Value = Math.Clamp(savedBrightness, 0, 100);
                 if (_lblBrightHdr != null) _lblBrightHdr.Text = $"BRIGHTNESS: {_brightnessSlider.Value}%";
                 _speedSlider.Value = Math.Clamp(savedSpeed, 1, 100);
@@ -1572,7 +1641,12 @@ namespace PredatorControlApp
                 int clampedMode = Math.Clamp(savedRgbMode, 0, 7);
                 if (clampedMode == 0)
                 {
-                    _wmi.SetStaticColor((byte)savedR, (byte)savedG, (byte)savedB, (byte)savedBrightness);
+                    for (int i = 0; i < 4; i++)
+                    {
+                        var (zr, zg, zb) = savedZoneColors[i];
+                        _wmi.SetZoneColor(i, zr, zg, zb);
+                        _btnZoneColor[i]?.Invalidate();
+                    }
                     _rgbDropDown.SelectedIndex = 0;
                     UpdateRgbControls(0);
                     CheckRgbTrayFromMode(0);
