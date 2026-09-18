@@ -101,6 +101,27 @@ namespace PredatorControlApp
             }
         }
 
+        private bool SendRgbKbCommand(uint zone, byte r, byte g, byte b)
+        {
+            ulong payload = zone | ((ulong)r << 8) | ((ulong)g << 16) | ((ulong)b << 24);
+            try
+            {
+                var obj = GetWmiObject();
+                if (obj == null) return false;
+
+                using var inParams = obj.GetMethodParameters("SetGamingRgbKb");
+                inParams["gmInput"] = payload;
+                using var outParams = obj.InvokeMethod("SetGamingRgbKb", inParams, null);
+                ulong result = Convert.ToUInt64(outParams["gmOutput"]);
+                return (result & 0xFF) == 0;
+            }
+            catch
+            {
+                InvalidateCache();
+                return false;
+            }
+        }
+
         private int GetSensorReading(ulong sensorId)
         {
             try
@@ -186,16 +207,36 @@ namespace PredatorControlApp
             ApplyLightingMode(_lastMode);
         }
 
-        public void SetStaticColor(byte r, byte g, byte b, byte brightness)
+        public bool SetStaticColor(byte r, byte g, byte b, byte brightness)
         {
             _lastR = r; _lastG = g; _lastB = b;
             _brightness = brightness;
             _lastMode = 0;
-            ApplyLightingMode(0);
+
+            // Static color is NOT an effect mode on SetGamingKBBacklight - it's a
+            // separate WMI call (confirmed live: gmInput = zone | (R<<8) | (G<<16) | (B<<24),
+            // zones are 1-4 on this keyboard). Using SetGamingKBBacklight with mode=0
+            // silently did nothing, which was the original bug.
+            SendCommand("SetGamingLEDBehavior", 0x07ul);
+            Thread.Sleep(50);
+
+            bool allOk = true;
+            for (uint zone = 1; zone <= 4; zone++)
+            {
+                allOk &= SendRgbKbCommand(zone, r, g, b);
+                Thread.Sleep(20);
+            }
+            return allOk;
         }
 
         private void ApplyLightingMode(int mode)
         {
+            if (mode == 0)
+            {
+                SetStaticColor(_lastR, _lastG, _lastB, _brightness);
+                return;
+            }
+
             SendCommand("SetGamingLEDBehavior", 0x07ul);
             Thread.Sleep(50);
 
