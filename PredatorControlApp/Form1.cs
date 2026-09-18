@@ -109,6 +109,8 @@ namespace PredatorControlApp
         private WmiController _wmi = new();
         private System.Windows.Forms.Timer _timer = new();
         private NotifyIcon _trayIcon = new();
+        private bool _suppressTrayToggle = false;
+        private readonly System.Windows.Forms.Timer _trayClickTimer = new();
         private ContextMenuStrip _trayMenu = new();
         private ColorDialog _colorPicker = new() { FullOpen = true };
 
@@ -422,7 +424,47 @@ namespace PredatorControlApp
             _trayIcon.ContextMenuStrip = _trayMenu;
             _trayIcon.Text = "Predator Control";
             try { _trayIcon.Visible = true; } catch { }
-            _trayIcon.DoubleClick += (s, e) => ShowApp();
+
+            // Single left-click toggles turbo; double-click opens the window.
+            // Click always fires as part of a DoubleClick sequence too, so a short
+            // timer (SystemInformation.DoubleClickTime) is used to tell them apart -
+            // if DoubleClick arrives before the timer fires, the single-click action
+            // is suppressed.
+            _trayClickTimer.Interval = SystemInformation.DoubleClickTime;
+            _trayIcon.MouseClick += (s, e) =>
+            {
+                if (e.Button != MouseButtons.Left) return; // right-click still opens the context menu
+                _suppressTrayToggle = false;
+                _trayClickTimer.Stop();
+                _trayClickTimer.Start();
+            };
+            _trayClickTimer.Tick += (s, e) =>
+            {
+                _trayClickTimer.Stop();
+                if (!_suppressTrayToggle) ToggleTurbo();
+            };
+            _trayIcon.DoubleClick += (s, e) =>
+            {
+                _suppressTrayToggle = true;
+                _trayClickTimer.Stop();
+                ShowApp();
+            };
+        }
+
+        private void ToggleTurbo()
+        {
+            bool turboOn = _activePowerBtn == _btnTurbo;
+            if (turboOn)
+            {
+                ApplyPowerMode(0x01, _btnBalanced);
+                ApplyFanMode(0x01, _btnAutoFan);
+            }
+            else
+            {
+                ApplyPowerMode(0x05, _btnTurbo);
+                ApplyFanMode(0x02, _btnMaxFan);
+            }
+            _trayIcon.ShowBalloonTip(800, "Predator Control", turboOn ? "Turbo OFF" : "Turbo ON", ToolTipIcon.None);
         }
 
         private void BuildTrayMenu()
