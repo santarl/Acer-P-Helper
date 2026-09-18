@@ -178,6 +178,10 @@ namespace PredatorControlApp
 
         private PredatorSwitch _switchBatteryLimit = null!;
         private Label _lblBatteryStatus = null!;
+        private PredatorSwitch _switchBacklightTimeout = null!;
+        private Label _lblBacklightTimeoutStatus = null!;
+        private ToolStripMenuItem _trayBacklightTimeout = null!;
+        private bool _isUpdatingBacklightTimeout;
 
         
         private GameSyncController _gameSync = null!;
@@ -507,10 +511,16 @@ namespace PredatorControlApp
             _trayBatteryLimit100 = new ToolStripMenuItem("Full Charge (100%)", null, (s, e) => ApplyBatteryLimit(false));
             _trayBatteryMenu.DropDownItems.AddRange([_trayBatteryLimit80, _trayBatteryLimit100]);
 
+            _trayBacklightTimeout = new ToolStripMenuItem("Keyboard Backlight Auto-Off", null, (s, e) =>
+            {
+                ApplyBacklightTimeout(!_trayBacklightTimeout.Checked);
+            });
+
             _trayMenu.Items.Add(powerMenu);
             _trayMenu.Items.Add(fanMenu);
             _trayMenu.Items.Add(displayMenu);
             _trayMenu.Items.Add(_trayBatteryMenu);
+            _trayMenu.Items.Add(_trayBacklightTimeout);
             _trayMenu.Items.Add(rgbMenu);
             _trayMenu.Items.Add(new ToolStripSeparator());
             _trayMenu.Items.Add("Open Dashboard", null, (s, e) => ShowApp());
@@ -786,6 +796,22 @@ namespace PredatorControlApp
             _switchBatteryLimit.CheckedChanged += (s, e) =>
             {
                 ApplyBatteryLimit(_switchBatteryLimit.Checked);
+            };
+
+            y += switchH + S(12);
+            _lblBacklightTimeoutStatus = MakeLabel("Keyboard Backlight Auto-Off", pad, y, FontBody, SubHeaderColor);
+            CenterV(_lblBacklightTimeoutStatus, y, switchH);
+
+            _switchBacklightTimeout = new PredatorSwitch
+            {
+                Location = new Point(_formW - pad - S(48), y),
+                Size = new Size(S(48), switchH)
+            };
+            _contentPanel.Controls.Add(_switchBacklightTimeout);
+
+            _switchBacklightTimeout.CheckedChanged += (s, e) =>
+            {
+                ApplyBacklightTimeout(_switchBacklightTimeout.Checked);
             };
 
             y += switchH + S(12);
@@ -1178,6 +1204,33 @@ namespace PredatorControlApp
             }
         }
 
+        private void ApplyBacklightTimeout(bool enabled)
+        {
+            if (_isUpdatingBacklightTimeout) return;
+            _isUpdatingBacklightTimeout = true;
+
+            try
+            {
+                if (_wmi.SetBacklightTimeout(enabled))
+                {
+                    if (_switchBacklightTimeout.Checked != enabled)
+                        _switchBacklightTimeout.Checked = enabled;
+
+                    _lblBacklightTimeoutStatus.Text = enabled ? "Auto-Off After 30s" : "Always On";
+                    _trayBacklightTimeout.Checked = enabled;
+                    SaveState("BacklightTimeout", enabled ? 1 : 0);
+                }
+                else
+                {
+                    _switchBacklightTimeout.Checked = !enabled;
+                }
+            }
+            finally
+            {
+                _isUpdatingBacklightTimeout = false;
+            }
+        }
+
         private void ApplyRgbModeFromDropdown(int mode)
         {
             byte bright = (byte)_brightnessSlider.Value;
@@ -1553,6 +1606,19 @@ namespace PredatorControlApp
                     _trayBatteryMenu.Enabled = false;
                     _isUpdatingBattery = false;
                 }
+
+                // Default is OFF (always on) rather than the stock 30s timeout -
+                // a fresh install/registry wipe should default to the less
+                // annoying behavior, not the one we're specifically working
+                // around.
+                bool backlightTimeoutOn = GetInt(key, "BacklightTimeout", 0, 0, 1) == 1;
+                _wmi.SetBacklightTimeout(backlightTimeoutOn);
+
+                _isUpdatingBacklightTimeout = true;
+                _switchBacklightTimeout.Checked = backlightTimeoutOn;
+                _lblBacklightTimeoutStatus.Text = backlightTimeoutOn ? "Auto-Off After 30s" : "Always On";
+                _trayBacklightTimeout.Checked = backlightTimeoutOn;
+                _isUpdatingBacklightTimeout = false;
             }
             catch { }
         }
