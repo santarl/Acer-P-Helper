@@ -1036,6 +1036,34 @@ namespace PredatorControlApp
                 };
             }
 
+            // Turbo/normal RGB "looks": snapshot whatever mode+color is
+            // currently active (set up via the controls above) into one of
+            // two slots, auto-applied when turbo is toggled on/off.
+            y += btnH + S(16);
+            int profileBtnGap = S(10);
+            int profileBtnW = (contentW - profileBtnGap) / 2;
+            var btnSaveTurboLook = MakeButton("Save as Turbo Look", pad, y, profileBtnW, btnH);
+            var btnSaveNormalLook = MakeButton("Save as Normal Look", pad + profileBtnW + profileBtnGap, y, profileBtnW, btnH);
+
+            btnSaveTurboLook.Click += (s, e) =>
+            {
+                _wmi.SaveCurrentAsTurboProfile();
+                var (m, r, g, b) = _wmi.TurboProfile;
+                SaveState("TurboProfile_Mode", m);
+                SaveState("TurboProfile_R", r); SaveState("TurboProfile_G", g); SaveState("TurboProfile_B", b);
+                MessageBox.Show(this, "Current RGB look saved for Turbo mode.", "Predator Control",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+            };
+            btnSaveNormalLook.Click += (s, e) =>
+            {
+                _wmi.SaveCurrentAsNormalProfile();
+                var (m, r, g, b) = _wmi.NormalProfile;
+                SaveState("NormalProfile_Mode", m);
+                SaveState("NormalProfile_R", r); SaveState("NormalProfile_G", g); SaveState("NormalProfile_B", b);
+                MessageBox.Show(this, "Current RGB look saved for normal (non-turbo) mode.", "Predator Control",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+            };
+
             y += btnH + S(28);
             AddSeparator(y);
             y += S(20);
@@ -1356,7 +1384,14 @@ namespace PredatorControlApp
             byte bright = (byte)_brightnessSlider.Value;
             byte speed = GetMappedSpeed();
 
-            _wmi.SetRgbMode(mode, _wmi.LastR, _wmi.LastG, _wmi.LastB, bright, speed, 0);
+            // mode 0 (Static) needs SwitchToStaticMode, not SetRgbMode -
+            // SetRgbMode(0, ...) would silently no-op the color since static
+            // mode reads from the per-zone cache, not the r/g/b it's given.
+            // The dashboard's own dropdown has always special-cased 0 before
+            // reaching this method, which is why this never surfaced here
+            // until the flyout's dropdown started calling it for every mode.
+            if (mode == 0) _wmi.SwitchToStaticMode();
+            else _wmi.SetRgbMode(mode, _wmi.LastR, _wmi.LastG, _wmi.LastB, bright, speed, 0);
 
             if (_rgbDropDown.SelectedIndex != mode)
                 _rgbDropDown.SelectedIndex = mode;
@@ -1756,6 +1791,28 @@ namespace PredatorControlApp
                 _lblBacklightTimeoutStatus.Text = backlightTimeoutOn ? "Auto-Off After 30s" : "Always On";
                 _trayBacklightTimeout.Checked = backlightTimeoutOn;
                 _isUpdatingBacklightTimeout = false;
+
+                // Restore saved turbo/normal RGB "looks" if the user has set
+                // either up - this only restores the definitions themselves,
+                // it does not force an RGB change on startup. -1 (the
+                // GetInt fallback) means "not configured yet."
+                int turboProfileMode = GetInt(key, "TurboProfile_Mode", -1, -1, 7);
+                if (turboProfileMode >= 0)
+                {
+                    byte tr = (byte)GetInt(key, "TurboProfile_R", 0, 0, 255);
+                    byte tg = (byte)GetInt(key, "TurboProfile_G", 150, 0, 255);
+                    byte tb = (byte)GetInt(key, "TurboProfile_B", 255, 0, 255);
+                    _wmi.SetTurboProfileRaw(turboProfileMode, tr, tg, tb);
+                }
+
+                int normalProfileMode = GetInt(key, "NormalProfile_Mode", -1, -1, 7);
+                if (normalProfileMode >= 0)
+                {
+                    byte nr = (byte)GetInt(key, "NormalProfile_R", 0, 0, 255);
+                    byte ng = (byte)GetInt(key, "NormalProfile_G", 150, 0, 255);
+                    byte nb = (byte)GetInt(key, "NormalProfile_B", 255, 0, 255);
+                    _wmi.SetNormalProfileRaw(normalProfileMode, nr, ng, nb);
+                }
             }
             catch { }
         }

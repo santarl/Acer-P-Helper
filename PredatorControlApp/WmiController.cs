@@ -43,6 +43,86 @@ namespace PredatorControlApp
         public byte LastR => _lastR;
         public byte LastG => _lastG;
         public byte LastB => _lastB;
+        public int LastMode => _lastMode;
+        public byte CurrentSpeed => _speed;
+
+        /// <summary>
+        /// Applies an RGB configuration correctly regardless of mode - static
+        /// mode (0) needs SetStaticColor (it has no firmware brightness
+        /// register and reads from the per-zone cache, not from SetRgbMode's
+        /// r/g/b), everything else uses SetRgbMode directly. Used by the
+        /// turbo/normal profile system and by the transient turbo-toggle
+        /// flourish so both go through one correct path instead of each
+        /// needing to remember this distinction separately.
+        /// </summary>
+        public void ApplyRgbSnapshot(int mode, byte r, byte g, byte b, byte brightness, byte speed)
+        {
+            if (mode == 0) SetStaticColor(r, g, b, brightness);
+            else SetRgbMode(mode, r, g, b, brightness, speed, 0);
+        }
+
+        /// <summary>
+        /// Switches to static mode using whatever per-zone colors are
+        /// already cached, rather than forcing a single new color - the
+        /// right behavior for "the user picked Static from a mode dropdown"
+        /// (preserve their per-zone setup) as opposed to "the user picked a
+        /// new color while already in static mode" (SetStaticColor/
+        /// SetZoneColor, which do take a color to apply).
+        /// </summary>
+        public void SwitchToStaticMode()
+        {
+            _lastMode = 0;
+            ApplyLightingMode(0);
+        }
+
+        // Optional turbo/normal RGB "looks" - a single mode+color pair for
+        // each, not per-zone (matching how the user described this: "a
+        // turbo colour and mode" and "a non-turbo colour and mode",
+        // singular). Mode -1 means "not configured yet" - ToggleTurbo falls
+        // back to just restoring whatever was active before its transient
+        // flourish animation in that case, rather than forcing an unwanted
+        // RGB change before the user has actually set either look up.
+        private int _turboProfileMode = -1;
+        private byte _turboProfileR, _turboProfileG, _turboProfileB;
+        private int _normalProfileMode = -1;
+        private byte _normalProfileR, _normalProfileG, _normalProfileB;
+
+        public bool HasTurboProfile => _turboProfileMode >= 0;
+        public bool HasNormalProfile => _normalProfileMode >= 0;
+
+        public void SaveCurrentAsTurboProfile()
+        {
+            _turboProfileMode = _lastMode; _turboProfileR = _lastR; _turboProfileG = _lastG; _turboProfileB = _lastB;
+        }
+
+        public void SaveCurrentAsNormalProfile()
+        {
+            _normalProfileMode = _lastMode; _normalProfileR = _lastR; _normalProfileG = _lastG; _normalProfileB = _lastB;
+        }
+
+        public void ApplyTurboProfile()
+        {
+            if (HasTurboProfile) ApplyRgbSnapshot(_turboProfileMode, _turboProfileR, _turboProfileG, _turboProfileB, _brightness, _speed);
+        }
+
+        public void ApplyNormalProfile()
+        {
+            if (HasNormalProfile) ApplyRgbSnapshot(_normalProfileMode, _normalProfileR, _normalProfileG, _normalProfileB, _brightness, _speed);
+        }
+
+        /// <summary>For registry persistence (Form1's SaveState/LoadMemory).</summary>
+        public (int mode, byte r, byte g, byte b) TurboProfile => (_turboProfileMode, _turboProfileR, _turboProfileG, _turboProfileB);
+        public (int mode, byte r, byte g, byte b) NormalProfile => (_normalProfileMode, _normalProfileR, _normalProfileG, _normalProfileB);
+
+        public void SetTurboProfileRaw(int mode, byte r, byte g, byte b)
+        {
+            _turboProfileMode = mode; _turboProfileR = r; _turboProfileG = g; _turboProfileB = b;
+        }
+
+        public void SetNormalProfileRaw(int mode, byte r, byte g, byte b)
+        {
+            _normalProfileMode = mode; _normalProfileR = r; _normalProfileG = g; _normalProfileB = b;
+        }
         public byte Brightness => _brightness;
         public byte Speed => _speed;
         public byte Direction => _direction;
