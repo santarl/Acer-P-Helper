@@ -28,6 +28,8 @@ namespace PredatorControlApp
 
         private Panel _rgbExpandPanel = null!;
         private readonly Panel[] _zoneSwatches = new Panel[4];
+        private PredatorDropDown _modeDropDown = null!;
+        private Button _btnApplyAll = null!;
         private PredatorSlider _brightnessSlider = null!;
         private ColorDialog _colorPicker = new();
         private bool _rgbExpanded;
@@ -37,7 +39,7 @@ namespace PredatorControlApp
         private readonly System.Windows.Forms.Timer _sensorTimer = new() { Interval = 2000 };
 
         private const int CollapsedHeight = 300;
-        private const int ExpandedHeight = 420;
+        private const int ExpandedHeight = 490;
         private const int PanelWidth = 340;
 
         private bool _suppressDeactivate;
@@ -152,6 +154,7 @@ namespace PredatorControlApp
             _rgbExpandPanel.BackColor = BackColor;
             _sensorLabel.BackColor = BackColor;
             _gearButton.BackColor = BackColor;
+            _btnApplyAll.BackColor = DwmAccentColor.Darken(BackColor, 0.15f);
             foreach (var s in _zoneSwatches) s.BackColor = BackColor;
         }
 
@@ -178,15 +181,29 @@ namespace PredatorControlApp
             Controls.AddRange(new Control[] { _tileTurbo, _tileRgb, _tileBacklight, _tileBattery });
 
             int expandY = pad * 3 + tileH * 2;
-            _rgbExpandPanel = new Panel { Location = new Point(pad, expandY), Size = new Size(PanelWidth - pad * 2, 110), Visible = false };
+            _rgbExpandPanel = new Panel { Location = new Point(pad, expandY), Size = new Size(PanelWidth - pad * 2, 180), Visible = false };
 
+            _modeDropDown = new PredatorDropDown { Location = new Point(0, 0), Size = new Size(PanelWidth - pad * 2, 30) };
+            foreach (var name in Form1.RgbModeNames) _modeDropDown.Items.Add(name);
+            _modeDropDown.SelectedIndexChanged += (s, e) =>
+            {
+                int mode = _modeDropDown.SelectedIndex;
+                _owner.ApplyRgbModeFromDropdown(mode);
+                bool isStatic = mode == 0;
+                foreach (var sw in _zoneSwatches) sw.Enabled = isStatic;
+                _btnApplyAll.Enabled = isStatic;
+                RefreshTiles();
+            };
+            _rgbExpandPanel.Controls.Add(_modeDropDown);
+
+            int swatchY = 40;
             int swatchSize = 36, swatchGap = 10;
             for (int i = 0; i < 4; i++)
             {
                 int zoneIndex = i;
                 var swatch = new Panel
                 {
-                    Location = new Point((swatchSize + swatchGap) * i, 0),
+                    Location = new Point((swatchSize + swatchGap) * i, swatchY),
                     Size = new Size(swatchSize, swatchSize),
                     Cursor = Cursors.Hand
                 };
@@ -212,22 +229,51 @@ namespace PredatorControlApp
                         var c = _colorPicker.Color;
                         _wmi.SetZoneColor(zoneIndex, c.R, c.G, c.B);
                         swatch.Invalidate();
+                        RefreshTiles();
                     }
                 };
                 _zoneSwatches[i] = swatch;
                 _rgbExpandPanel.Controls.Add(swatch);
             }
 
+            _btnApplyAll = new Button
+            {
+                Text = "Same Color for All Zones",
+                FlatStyle = FlatStyle.Flat,
+                ForeColor = Color.White,
+                UseVisualStyleBackColor = false,
+                Location = new Point(0, swatchY + swatchSize + 8),
+                Size = new Size(PanelWidth - pad * 2, 26),
+                Cursor = Cursors.Hand
+            };
+            _btnApplyAll.FlatAppearance.BorderSize = 0;
+            _btnApplyAll.Click += (s, e) =>
+            {
+                var (zr, zg, zb) = _wmi.GetZoneColor(0);
+                _colorPicker.Color = Color.FromArgb(zr, zg, zb);
+                _suppressDeactivate = true;
+                var result = _colorPicker.ShowDialog(this);
+                _suppressDeactivate = false;
+                if (result == DialogResult.OK)
+                {
+                    var c = _colorPicker.Color;
+                    _wmi.SetStaticColor(c.R, c.G, c.B, _wmi.StaticBrightnessPct);
+                    foreach (var sw in _zoneSwatches) sw.Invalidate();
+                    RefreshTiles();
+                }
+            };
+            _rgbExpandPanel.Controls.Add(_btnApplyAll);
+
             var lblBrightness = new Label
             {
                 Text = "Brightness",
                 ForeColor = Color.White,
-                Location = new Point(0, swatchSize + 14),
+                Location = new Point(0, swatchY + swatchSize + 44),
                 AutoSize = true
             };
             _brightnessSlider = new PredatorSlider
             {
-                Location = new Point(0, swatchSize + 34),
+                Location = new Point(0, swatchY + swatchSize + 64),
                 Size = new Size(PanelWidth - pad * 2, 28),
                 Minimum = 0,
                 Maximum = 100,
@@ -271,7 +317,13 @@ namespace PredatorControlApp
             Height = _rgbExpanded ? ExpandedHeight : CollapsedHeight;
 
             if (_rgbExpanded)
+            {
                 _brightnessSlider.Value = _wmi.StaticBrightnessPct;
+                _modeDropDown.SelectedIndex = _owner.CurrentRgbMode;
+                bool isStatic = _owner.CurrentRgbMode == 0;
+                foreach (var sw in _zoneSwatches) sw.Enabled = isStatic;
+                _btnApplyAll.Enabled = isStatic;
+            }
 
             int bottomY = Height - 44;
             _sensorLabel.Location = new Point(_sensorLabel.Location.X, bottomY);

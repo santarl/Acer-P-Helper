@@ -110,6 +110,7 @@ namespace PredatorControlApp
         internal WmiController Wmi => _wmi;
         internal bool IsTurboOn => _activePowerBtn == _btnTurbo;
         internal bool BatteryLimitEnabled => _switchBatteryLimit.Checked;
+        internal int CurrentRgbMode => _rgbDropDown.SelectedIndex;
         private System.Windows.Forms.Timer _timer = new();
         private NotifyIcon _trayIcon = new();
         internal NotifyIcon TrayIconRef => _trayIcon;
@@ -202,7 +203,7 @@ namespace PredatorControlApp
         private PredatorButton _btnCheckUpdates = null!;
         private bool _updateCheckRunning;
 
-        private static readonly string[] RgbModeNames = { "Static", "Breathing", "Neon", "Wave", "Shifting", "Zoom", "Meteor", "Twinkling" };
+        internal static readonly string[] RgbModeNames = { "Static", "Breathing", "Neon", "Wave", "Shifting", "Zoom", "Meteor", "Twinkling" };
 
         private ToolStripMenuItem _trayPowerQuiet = null!, _trayPowerBal = null!, _trayPowerPerf = null!,
                                   _trayPowerTurbo = null!, _trayPowerEco = null!;
@@ -1350,7 +1351,7 @@ namespace PredatorControlApp
             }
         }
 
-        private void ApplyRgbModeFromDropdown(int mode)
+        internal void ApplyRgbModeFromDropdown(int mode)
         {
             byte bright = (byte)_brightnessSlider.Value;
             byte speed = GetMappedSpeed();
