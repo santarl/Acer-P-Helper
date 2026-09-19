@@ -102,8 +102,7 @@ namespace PredatorControlApp
         /// </summary>
         public void ShowNearTray()
         {
-            var wa = Screen.PrimaryScreen!.WorkingArea;
-            Location = new Point(wa.Right - Width - 8, wa.Bottom - Height - 8);
+            PositionNearTray();
 
             BackColor = DwmAccentColor.GetAccentColor(Color.FromArgb(45, 40, 90));
             RefreshChildBackgrounds();
@@ -112,6 +111,32 @@ namespace PredatorControlApp
 
             Show();
             Activate();
+        }
+
+        private void PositionNearTray()
+        {
+            var wa = Screen.PrimaryScreen!.WorkingArea;
+            var iconRect = TrayIconPosition.TryGetRect(_owner.TrayIconRef);
+
+            if (iconRect.HasValue)
+            {
+                var r = iconRect.Value;
+                int x = r.X + r.Width / 2 - Width / 2;
+                int y = r.Y - Height - 8;
+
+                // Clamp to the working area in case the icon sits near an
+                // edge (or in the overflow tray) so the panel never renders
+                // partly off-screen.
+                x = Math.Clamp(x, wa.Left + 4, wa.Right - Width - 4);
+                y = Math.Clamp(y, wa.Top + 4, wa.Bottom - Height - 4);
+                Location = new Point(x, y);
+            }
+            else
+            {
+                // Fallback: bottom-right corner, matching how Quick Settings
+                // itself behaves if it can't resolve an exact icon position.
+                Location = new Point(wa.Right - Width - 8, wa.Bottom - Height - 8);
+            }
         }
 
         /// <summary>
@@ -252,10 +277,9 @@ namespace PredatorControlApp
             _sensorLabel.Location = new Point(_sensorLabel.Location.X, bottomY);
             _gearButton.Location = new Point(_gearButton.Location.X, bottomY - 4);
 
-            // Re-anchor to the same bottom-right corner after resizing so
-            // the panel doesn't grow downward past the screen edge.
-            var wa = Screen.PrimaryScreen!.WorkingArea;
-            Location = new Point(wa.Right - Width - 8, wa.Bottom - Height - 8);
+            // Re-anchor after resizing so the panel doesn't grow downward
+            // past the screen edge (or up past the top, near the tray icon).
+            PositionNearTray();
 
             if (_rgbExpanded)
                 foreach (var s in _zoneSwatches) s.Invalidate();

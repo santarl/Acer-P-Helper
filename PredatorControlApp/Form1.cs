@@ -112,6 +112,7 @@ namespace PredatorControlApp
         internal bool BatteryLimitEnabled => _switchBatteryLimit.Checked;
         private System.Windows.Forms.Timer _timer = new();
         private NotifyIcon _trayIcon = new();
+        internal NotifyIcon TrayIconRef => _trayIcon;
         private int _trayClickCount = 0;
         private readonly System.Windows.Forms.Timer _trayClickTimer = new();
         private ContextMenuStrip _trayMenu = new();
