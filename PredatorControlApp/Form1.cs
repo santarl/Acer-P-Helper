@@ -107,6 +107,9 @@ namespace PredatorControlApp
         #region Fields
         
         private WmiController _wmi = new();
+        internal WmiController Wmi => _wmi;
+        internal bool IsTurboOn => _activePowerBtn == _btnTurbo;
+        internal bool BatteryLimitEnabled => _switchBatteryLimit.Checked;
         private System.Windows.Forms.Timer _timer = new();
         private NotifyIcon _trayIcon = new();
         private bool _suppressTrayToggle = false;
@@ -238,6 +241,7 @@ namespace PredatorControlApp
             BuildUI();
             BuildTrayMenu();
             SetupSystemTray();
+            UpdateTrayIconBadge(false); // turbo doesn't persist across restarts in this app; start consistent with that
 
             if (GetCurrentRefreshRate() <= 60)
             {
@@ -423,18 +427,20 @@ namespace PredatorControlApp
 
         private void SetupSystemTray()
         {
-            try { _trayIcon.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
-            catch { _trayIcon.Icon = SystemIcons.Application; }
+            try { _baseTrayIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
+            catch { _baseTrayIcon = SystemIcons.Application; }
+            _trayIcon.Icon = _baseTrayIcon;
 
             _trayIcon.ContextMenuStrip = _trayMenu;
             _trayIcon.Text = "Predator Control";
             try { _trayIcon.Visible = true; } catch { }
 
-            // Single left-click toggles turbo; double-click opens the window.
-            // Click always fires as part of a DoubleClick sequence too, so a short
-            // timer (SystemInformation.DoubleClickTime) is used to tell them apart -
-            // if DoubleClick arrives before the timer fires, the single-click action
-            // is suppressed.
+            // Single left-click opens the Quick Settings flyout; double-click
+            // toggles turbo directly (swapped from the previous click/open
+            // arrangement). Click always fires as part of a DoubleClick
+            // sequence too, so a short timer (SystemInformation.DoubleClickTime)
+            // is used to tell them apart - if DoubleClick arrives before the
+            // timer fires, the single-click action is suppressed.
             _trayClickTimer.Interval = SystemInformation.DoubleClickTime;
             _trayIcon.MouseClick += (s, e) =>
             {
@@ -446,17 +452,55 @@ namespace PredatorControlApp
             _trayClickTimer.Tick += (s, e) =>
             {
                 _trayClickTimer.Stop();
-                if (!_suppressTrayToggle) ToggleTurbo();
+                if (!_suppressTrayToggle) ShowQuickSettings();
             };
             _trayIcon.DoubleClick += (s, e) =>
             {
                 _suppressTrayToggle = true;
                 _trayClickTimer.Stop();
-                ShowApp();
+                ToggleTurbo();
             };
         }
 
-        private void ToggleTurbo()
+        private QuickSettingsFlyout? _quickSettings;
+        private Icon? _baseTrayIcon;
+
+        private void ShowQuickSettings()
+        {
+            _quickSettings ??= new QuickSettingsFlyout(this);
+            if (_quickSettings.Visible) _quickSettings.Hide();
+            else _quickSettings.ShowNearTray();
+        }
+
+        /// <summary>
+        /// Tints the tray icon with a small colored badge dot so turbo state
+        /// is visible at a glance without opening anything - useful when fan
+        /// noise isn't audible (e.g. wearing headphones).
+        /// </summary>
+        private void UpdateTrayIconBadge(bool turboOn)
+        {
+            if (_baseTrayIcon == null) return;
+            try
+            {
+                using var bmp = _baseTrayIcon.ToBitmap();
+                using var g = Graphics.FromImage(bmp);
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                int d = (int)(bmp.Width * 0.42);
+                var rect = new Rectangle(bmp.Width - d, bmp.Height - d, d, d);
+                using var brush = new SolidBrush(turboOn ? Color.FromArgb(60, 220, 100) : Color.FromArgb(140, 140, 140));
+                using var pen = new Pen(Color.FromArgb(30, 30, 34), 1.5f);
+                g.FillEllipse(brush, rect);
+                g.DrawEllipse(pen, rect);
+
+                var oldIcon = _trayIcon.Icon;
+                var handle = bmp.GetHicon();
+                _trayIcon.Icon = Icon.FromHandle(handle);
+                if (oldIcon != null && oldIcon != _baseTrayIcon) oldIcon.Dispose();
+            }
+            catch { }
+        }
+
+        internal void ToggleTurbo()
         {
             bool turboOn = _activePowerBtn == _btnTurbo;
             if (turboOn)
@@ -470,6 +514,8 @@ namespace PredatorControlApp
                 ApplyFanMode(0x02, _btnMaxFan);
             }
             _trayIcon.ShowBalloonTip(800, "Predator Control", turboOn ? "Turbo OFF" : "Turbo ON", ToolTipIcon.None);
+            UpdateTrayIconBadge(!turboOn);
+            if (_quickSettings != null && _quickSettings.Visible) _quickSettings.RefreshTiles();
         }
 
         private void BuildTrayMenu()
@@ -1234,7 +1280,7 @@ namespace PredatorControlApp
             CheckTrayItem(hz <= 60 ? _trayDisplay60 : _trayDisplayMax, _trayDisplay60, _trayDisplayMax);
         }
 
-        private void ApplyBatteryLimit(bool limit)
+        internal void ApplyBatteryLimit(bool limit)
         {
             if (_isUpdatingBattery) return;
             _isUpdatingBattery = true;
@@ -1261,7 +1307,7 @@ namespace PredatorControlApp
             }
         }
 
-        private void ApplyBacklightTimeout(bool enabled)
+        internal void ApplyBacklightTimeout(bool enabled)
         {
             if (_isUpdatingBacklightTimeout) return;
             _isUpdatingBacklightTimeout = true;
@@ -1978,7 +2024,7 @@ namespace PredatorControlApp
             active.Checked = true;
         }
 
-        private void ShowApp()
+        internal void ShowApp()
         {
             this.Show();
             this.WindowState = FormWindowState.Normal;

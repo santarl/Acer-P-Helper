@@ -206,6 +206,7 @@ namespace PredatorControlApp
         public void SetBrightness(byte brightness)
         {
             _brightness = brightness;
+            if (_lastMode == 0) _staticBrightnessPct = brightness;
             ApplyLightingMode(_lastMode);
         }
 
@@ -230,7 +231,40 @@ namespace PredatorControlApp
             // bit3 (zone D, value 8) was never reached, which is exactly why
             // only 3 of 4 zones changed. One bit per call addresses exactly
             // one zone independently.
-            return SendRgbKbCommand((uint)(1 << zoneIndex), r, g, b);
+            var (sr, sg, sb) = ScaleForStaticBrightness(r, g, b);
+            return SendRgbKbCommand((uint)(1 << zoneIndex), sr, sg, sb);
+        }
+
+        // SetGamingRgbKb's {zone, R, G, B} struct has no separate brightness
+        // field (matching the Linux driver's struct - brightness isn't a
+        // firmware register for static zones the way it is for effect
+        // modes). So brightness here is applied by scaling the RGB values
+        // before sending, while _zoneColors keeps the user's true chosen
+        // color unscaled - moving the slider back to 100% exactly restores
+        // the original color instead of compounding repeated dims.
+        private byte _staticBrightnessPct = 100;
+        public byte StaticBrightnessPct => _staticBrightnessPct;
+
+        private static (byte, byte, byte) ScaleForStaticBrightness(byte r, byte g, byte b, byte pct)
+        {
+            double f = Math.Clamp(pct, (byte)0, (byte)100) / 100.0;
+            return ((byte)(r * f), (byte)(g * f), (byte)(b * f));
+        }
+
+        private (byte, byte, byte) ScaleForStaticBrightness(byte r, byte g, byte b) =>
+            ScaleForStaticBrightness(r, g, b, _staticBrightnessPct);
+
+        public bool SetStaticBrightness(byte percent)
+        {
+            _staticBrightnessPct = Math.Clamp(percent, (byte)0, (byte)100);
+            bool allOk = true;
+            for (int zone = 0; zone < 4; zone++)
+            {
+                var (r, g, b) = _zoneColors[zone];
+                allOk &= ApplyZoneColorRaw(zone, r, g, b);
+                Thread.Sleep(15);
+            }
+            return allOk;
         }
 
         public bool SetZoneColor(int zoneIndex, byte r, byte g, byte b)
@@ -247,6 +281,7 @@ namespace PredatorControlApp
             // "quick color" picker for people who don't want to fuss with
             // per-zone colors. SetZoneColor is the per-zone entry point.
             _brightness = brightness;
+            _staticBrightnessPct = brightness;
             _lastMode = 0;
 
             SendCommand("SetGamingLEDBehavior", 0x07ul);
