@@ -517,6 +517,9 @@ namespace PredatorControlApp
             catch { }
         }
 
+        private readonly System.Windows.Forms.Timer _turboFlourishTimer = new() { Interval = 1200 };
+        private EventHandler? _turboFlourishHandler;
+
         internal void ToggleTurbo()
         {
             bool turboOn = _activePowerBtn == _btnTurbo;
@@ -533,6 +536,45 @@ namespace PredatorControlApp
             _trayIcon.ShowBalloonTip(800, "Predator Control", turboOn ? "Turbo OFF" : "Turbo ON", ToolTipIcon.None);
             UpdateTrayIconBadge(!turboOn);
             if (_quickSettings != null && _quickSettings.Visible) _quickSettings.RefreshTiles();
+
+            PlayTurboRgbFlourish(turningOn: !turboOn);
+        }
+
+        /// <summary>
+        /// Briefly plays the Wave effect when turbo turns on (Zoom when it
+        /// turns off), then settles into whichever look the user saved for
+        /// that state via "Save as Turbo/Normal Look" - or, if neither has
+        /// been configured yet, simply restores whatever RGB configuration
+        /// was active right before the flourish, so turning turbo on/off
+        /// never leaves an unconfigured keyboard stuck showing the flourish
+        /// effect indefinitely.
+        /// </summary>
+        private void PlayTurboRgbFlourish(bool turningOn)
+        {
+            _turboFlourishTimer.Stop();
+            if (_turboFlourishHandler != null) _turboFlourishTimer.Tick -= _turboFlourishHandler;
+
+            int preMode = _wmi.LastMode;
+            byte preR = _wmi.LastR, preG = _wmi.LastG, preB = _wmi.LastB;
+            byte brightness = (byte)_brightnessSlider.Value;
+            byte speed = GetMappedSpeed();
+
+            const int WaveMode = 3, ZoomMode = 5;
+            int flourishMode = turningOn ? WaveMode : ZoomMode;
+            _wmi.SetRgbMode(flourishMode, preR, preG, preB, brightness, speed, 0);
+
+            _turboFlourishHandler = (s, e) =>
+            {
+                _turboFlourishTimer.Stop();
+
+                if (turningOn && _wmi.HasTurboProfile) _wmi.ApplyTurboProfile();
+                else if (!turningOn && _wmi.HasNormalProfile) _wmi.ApplyNormalProfile();
+                else _wmi.ApplyRgbSnapshot(preMode, preR, preG, preB, brightness, speed);
+
+                if (_quickSettings != null && _quickSettings.Visible) _quickSettings.RefreshTiles();
+            };
+            _turboFlourishTimer.Tick += _turboFlourishHandler;
+            _turboFlourishTimer.Start();
         }
 
         private void BuildTrayMenu()
