@@ -42,6 +42,16 @@ namespace PredatorControlApp
 
         private bool _suppressDeactivate;
 
+        /// <summary>
+        /// When the flyout was last hidden by losing focus (as opposed to an
+        /// explicit Hide() call elsewhere). Clicking the tray icon while the
+        /// flyout is open steals focus first, auto-hiding it before the
+        /// tray click handler even runs - so Form1 checks this timestamp to
+        /// tell "the click that just closed it" apart from "a fresh click
+        /// that should reopen it."
+        /// </summary>
+        public DateTime LastDeactivatedAt { get; private set; } = DateTime.MinValue;
+
         public QuickSettingsFlyout(Form1 owner)
         {
             _owner = owner;
@@ -57,7 +67,7 @@ namespace PredatorControlApp
 
             BuildUi();
 
-            Deactivate += (s, e) => { if (!_suppressDeactivate) Hide(); };
+            Deactivate += (s, e) => { if (!_suppressDeactivate) { Hide(); LastDeactivatedAt = DateTime.UtcNow; } };
             KeyDown += (s, e) => { if (e.KeyCode == Keys.Escape) Hide(); };
             _sensorTimer.Tick += (s, e) => RefreshSensors();
             VisibleChanged += (s, e) =>

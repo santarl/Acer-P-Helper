@@ -112,7 +112,7 @@ namespace PredatorControlApp
         internal bool BatteryLimitEnabled => _switchBatteryLimit.Checked;
         private System.Windows.Forms.Timer _timer = new();
         private NotifyIcon _trayIcon = new();
-        private bool _suppressTrayToggle = false;
+        private int _trayClickCount = 0;
         private readonly System.Windows.Forms.Timer _trayClickTimer = new();
         private ContextMenuStrip _trayMenu = new();
         private ColorDialog _colorPicker = new() { FullOpen = true };
@@ -436,28 +436,33 @@ namespace PredatorControlApp
             try { _trayIcon.Visible = true; } catch { }
 
             // Single left-click opens the Quick Settings flyout; double-click
-            // toggles turbo directly (swapped from the previous click/open
-            // arrangement). Click always fires as part of a DoubleClick
-            // sequence too, so a short timer (SystemInformation.DoubleClickTime)
-            // is used to tell them apart - if DoubleClick arrives before the
-            // timer fires, the single-click action is suppressed.
+            // toggles turbo directly. .NET's NotifyIcon raises MouseClick for
+            // BOTH clicks of a double-click sequence (not just DoubleClick),
+            // so a boolean "suppress" flag set by DoubleClick could get raced
+            // and clobbered back to false by the second MouseClick depending
+            // on event order. Counting clicks within the timer window instead
+            // avoids that race entirely: DoubleClick always stops the timer
+            // outright, so the Tick callback simply never runs for a real
+            // double-click, regardless of ordering.
             _trayClickTimer.Interval = SystemInformation.DoubleClickTime;
             _trayIcon.MouseClick += (s, e) =>
             {
                 if (e.Button != MouseButtons.Left) return; // right-click still opens the context menu
-                _suppressTrayToggle = false;
+                _trayClickCount++;
                 _trayClickTimer.Stop();
                 _trayClickTimer.Start();
             };
             _trayClickTimer.Tick += (s, e) =>
             {
                 _trayClickTimer.Stop();
-                if (!_suppressTrayToggle) ShowQuickSettings();
+                if (_trayClickCount == 1) ShowQuickSettings();
+                _trayClickCount = 0;
             };
             _trayIcon.DoubleClick += (s, e) =>
             {
-                _suppressTrayToggle = true;
                 _trayClickTimer.Stop();
+                _trayClickCount = 0;
+                ToggleTurbo();
                 ToggleTurbo();
             };
         }
@@ -468,6 +473,16 @@ namespace PredatorControlApp
         private void ShowQuickSettings()
         {
             _quickSettings ??= new QuickSettingsFlyout(this);
+
+            // Clicking the tray icon while the flyout is open steals focus,
+            // which fires Deactivate -> Hide() before this handler runs -
+            // so by the time we get here, Visible is already false even
+            // though the user's intent was "close it," not "reopen it."
+            // Treat a click landing right after an auto-hide as the dismiss
+            // click and do nothing, rather than immediately reshowing it.
+            bool justAutoHidden = (DateTime.UtcNow - _quickSettings.LastDeactivatedAt).TotalMilliseconds < 300;
+            if (justAutoHidden) return;
+
             if (_quickSettings.Visible) _quickSettings.Hide();
             else _quickSettings.ShowNearTray();
         }
