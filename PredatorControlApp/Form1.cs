@@ -114,8 +114,6 @@ namespace PredatorControlApp
         private System.Windows.Forms.Timer _timer = new();
         private NotifyIcon _trayIcon = new();
         internal NotifyIcon TrayIconRef => _trayIcon;
-        private int _trayClickCount = 0;
-        private readonly System.Windows.Forms.Timer _trayClickTimer = new();
         private ContextMenuStrip _trayMenu = new();
         private ColorDialog _colorPicker = new() { FullOpen = true };
 
@@ -438,35 +436,22 @@ namespace PredatorControlApp
             _trayIcon.Text = "Predator Control";
             try { _trayIcon.Visible = true; } catch { }
 
-            // Single left-click opens the Quick Settings flyout; double-click
-            // toggles turbo directly. .NET's NotifyIcon raises MouseClick for
-            // BOTH clicks of a double-click sequence (not just DoubleClick),
-            // so a boolean "suppress" flag set by DoubleClick could get raced
-            // and clobbered back to false by the second MouseClick depending
-            // on event order. Counting clicks within the timer window instead
-            // avoids that race entirely: DoubleClick always stops the timer
-            // outright, so the Tick callback simply never runs for a real
-            // double-click, regardless of ordering.
-            _trayClickTimer.Interval = SystemInformation.DoubleClickTime;
-            _trayIcon.MouseClick += (s, e) =>
+            // Each mouse button does exactly one thing - no click-count/
+            // timer disambiguation needed at all, since there's no longer
+            // any ambiguity between "one click" and "the first half of a
+            // double-click" to resolve:
+            //   Left click   -> open/close the Quick Settings flyout
+            //   Middle click -> toggle turbo directly
+            //   Right click  -> context menu (handled automatically via
+            //                   ContextMenuStrip, no explicit code needed)
+            // Using MouseUp rather than MouseClick/DoubleClick: NotifyIcon's
+            // higher-level Click-family events aren't reliably raised for
+            // the middle button, while MouseUp reflects the raw button-up
+            // message directly regardless of which button it was.
+            _trayIcon.MouseUp += (s, e) =>
             {
-                if (e.Button != MouseButtons.Left) return; // right-click still opens the context menu
-                _trayClickCount++;
-                _trayClickTimer.Stop();
-                _trayClickTimer.Start();
-            };
-            _trayClickTimer.Tick += (s, e) =>
-            {
-                _trayClickTimer.Stop();
-                if (_trayClickCount == 1) ShowQuickSettings();
-                _trayClickCount = 0;
-            };
-            _trayIcon.DoubleClick += (s, e) =>
-            {
-                _trayClickTimer.Stop();
-                _trayClickCount = 0;
-                ToggleTurbo();
-                ToggleTurbo();
+                if (e.Button == MouseButtons.Left) ShowQuickSettings();
+                else if (e.Button == MouseButtons.Middle) ToggleTurbo();
             };
         }
 
