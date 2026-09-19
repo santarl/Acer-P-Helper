@@ -555,6 +555,18 @@ namespace PredatorControlApp
 
                 if (turningOn && _wmi.HasTurboProfile) _wmi.ApplyTurboProfile();
                 else if (!turningOn && _wmi.HasNormalProfile) _wmi.ApplyNormalProfile();
+                else if (preMode == 0)
+                {
+                    // SetZoneColor never updates LastR/G/B (only
+                    // SetStaticColor/SetRgbMode do) - so for anyone using
+                    // the per-zone swatches rather than the single quick-
+                    // color picker, preR/G/B here would be stale leftover
+                    // defaults, not the keyboard's real colors. Re-asserting
+                    // via SwitchToStaticMode reads the actual per-zone cache
+                    // instead, which is always accurate regardless of which
+                    // path was used to set it.
+                    _wmi.SwitchToStaticMode();
+                }
                 else _wmi.ApplyRgbSnapshot(preMode, preR, preG, preB, brightness, speed);
 
                 if (_quickSettings != null && _quickSettings.Visible) _quickSettings.RefreshTiles();
@@ -1699,6 +1711,7 @@ namespace PredatorControlApp
 
                 _brightnessSlider.Value = Math.Clamp(savedBrightness, 0, 100);
                 if (_lblBrightHdr != null) _lblBrightHdr.Text = $"BRIGHTNESS: {_brightnessSlider.Value}%";
+                _wmi.SetStaticBrightnessPctSilent((byte)_brightnessSlider.Value);
                 _speedSlider.Value = Math.Clamp(savedSpeed, 1, 100);
                 if (_lblSpeedHdr != null) _lblSpeedHdr.Text = $"EFFECT SPEED: {_speedSlider.Value}%";
 

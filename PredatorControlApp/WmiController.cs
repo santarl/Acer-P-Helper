@@ -92,13 +92,27 @@ namespace PredatorControlApp
 
         public void SaveCurrentAsTurboProfile()
         {
-            _turboProfileMode = _lastMode; _turboProfileR = _lastR; _turboProfileG = _lastG; _turboProfileB = _lastB;
+            _turboProfileMode = _lastMode;
+            (_turboProfileR, _turboProfileG, _turboProfileB) = CurrentRepresentativeColor();
         }
 
         public void SaveCurrentAsNormalProfile()
         {
-            _normalProfileMode = _lastMode; _normalProfileR = _lastR; _normalProfileG = _lastG; _normalProfileB = _lastB;
+            _normalProfileMode = _lastMode;
+            (_normalProfileR, _normalProfileG, _normalProfileB) = CurrentRepresentativeColor();
         }
+
+        /// <summary>
+        /// LastR/G/B only reflect colors set via SetStaticColor/SetRgbMode -
+        /// SetZoneColor (the per-zone swatches) never touches them, so
+        /// they'd be stale leftover defaults for anyone using per-zone
+        /// colors. For static mode, zone 0's actual current color is the
+        /// meaningful representative value instead; for effect modes,
+        /// LastR/G/B are always accurate since those only ever get set via
+        /// SetRgbMode.
+        /// </summary>
+        private (byte, byte, byte) CurrentRepresentativeColor() =>
+            _lastMode == 0 ? _zoneColors[0] : (_lastR, _lastG, _lastB);
 
         public void ApplyTurboProfile()
         {
@@ -345,6 +359,19 @@ namespace PredatorControlApp
                 Thread.Sleep(15);
             }
             return allOk;
+        }
+
+        /// <summary>
+        /// Sets only the internal brightness scale, without re-sending to
+        /// hardware - for startup restore ordering, where this needs to be
+        /// in place BEFORE the real per-zone colors get loaded (via
+        /// SetZoneColor), so that first real write already scales correctly
+        /// instead of writing once at the wrong (default) brightness and
+        /// then again moments later at the right one.
+        /// </summary>
+        public void SetStaticBrightnessPctSilent(byte percent)
+        {
+            _staticBrightnessPct = Math.Clamp(percent, (byte)0, (byte)100);
         }
 
         public bool SetZoneColor(int zoneIndex, byte r, byte g, byte b)
