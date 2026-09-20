@@ -41,8 +41,8 @@ namespace PredatorControlApp
         private Button _gearButton = null!;
         private readonly System.Windows.Forms.Timer _sensorTimer = new() { Interval = 2000 };
 
-        private const int CollapsedHeight = 300;
-        private const int ExpandedHeight = 580;
+        private int _collapsedHeight;
+        private int _expandedHeight;
         private const int PanelWidth = 340;
 
         private bool _suppressDeactivate;
@@ -67,7 +67,6 @@ namespace PredatorControlApp
             TopMost = true;
             StartPosition = FormStartPosition.Manual;
             Width = PanelWidth;
-            Height = CollapsedHeight;
             KeyPreview = true;
 
             BuildUi();
@@ -184,7 +183,7 @@ namespace PredatorControlApp
             Controls.AddRange(new Control[] { _tileTurbo, _tileRgb, _tileBacklight, _tileBattery });
 
             int expandY = pad * 3 + tileH * 2;
-            _rgbExpandPanel = new Panel { Location = new Point(pad, expandY), Size = new Size(PanelWidth - pad * 2, 270), Visible = false };
+            _rgbExpandPanel = new Panel { Location = new Point(pad, expandY), Size = new Size(PanelWidth - pad * 2, 1), Visible = false };
 
             _modeDropDown = new PredatorDropDown { Location = new Point(0, 0), Size = new Size(PanelWidth - pad * 2, 30) };
             foreach (var name in Form1.RgbModeNames) _modeDropDown.Items.Add(name);
@@ -317,7 +316,20 @@ namespace PredatorControlApp
             _rgbExpandPanel.Controls.Add(_brightnessSlider);
             Controls.Add(_rgbExpandPanel);
 
-            int bottomY = CollapsedHeight - 44;
+            // Size the expand panel tightly to its actual content (brightness
+            // slider is the last/lowest control in it) rather than a guessed
+            // round number - this is what was leaving empty space below
+            // "Same Color for All Zones" and below Brightness before: the
+            // panel was allocated more height than its content actually used.
+            int panelContentBottom = _brightnessSlider.Bottom;
+            _rgbExpandPanel.Height = panelContentBottom + 10;
+
+            const int bottomBarReserve = 44;
+            int tileGridBottom = pad * 2 + tileH * 2;
+            _collapsedHeight = tileGridBottom + pad + bottomBarReserve;
+            _expandedHeight = expandY + _rgbExpandPanel.Height + pad + bottomBarReserve;
+
+            int bottomY = _collapsedHeight - bottomBarReserve;
             _sensorLabel = new Label
             {
                 Text = "",
@@ -341,13 +353,15 @@ namespace PredatorControlApp
 
             Controls.Add(_sensorLabel);
             Controls.Add(_gearButton);
+
+            Height = _collapsedHeight;
         }
 
         private void ToggleRgbExpanded()
         {
             _rgbExpanded = !_rgbExpanded;
             _rgbExpandPanel.Visible = _rgbExpanded;
-            Height = _rgbExpanded ? ExpandedHeight : CollapsedHeight;
+            Height = _rgbExpanded ? _expandedHeight : _collapsedHeight;
 
             if (_rgbExpanded)
             {

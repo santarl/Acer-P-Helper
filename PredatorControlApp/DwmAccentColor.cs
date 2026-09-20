@@ -1,15 +1,15 @@
 using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using Microsoft.Win32;
 
 namespace PredatorControlApp
 {
     /// <summary>
-    /// Reads the current Windows accent/colorization color via DWM - the same
-    /// value Windows itself uses to tint the taskbar and title bars, and what
-    /// Quick Settings uses as its background. Queried fresh each time the
-    /// flyout is shown, so it stays current if the user changes their
-    /// wallpaper/accent color later without needing to restart the app.
+    /// Reads the current Windows accent color - the same value Quick
+    /// Settings and the Start menu use for their tiles. Queried fresh each
+    /// time the flyout is shown, so it stays current if the user changes
+    /// their wallpaper/accent color later without needing to restart.
     /// </summary>
     [SupportedOSPlatform("windows")]
     internal static class DwmAccentColor
@@ -18,20 +18,38 @@ namespace PredatorControlApp
         private static extern void DwmGetColorizationColor(out uint colorizationColor, [MarshalAs(UnmanagedType.Bool)] out bool opaqueBlend);
 
         /// <summary>
-        /// Returns the current accent color, or the given fallback if DWM is
-        /// unavailable for any reason (older Windows, remote session, etc).
+        /// Returns the current accent color, or the given fallback if it
+        /// can't be read for any reason (older Windows, remote session).
         /// </summary>
         public static Color GetAccentColor(Color fallback)
         {
+            // Quick Settings and the Start menu source their tint from
+            // AccentColorMenu (ABGR, note the reversed byte order vs the
+            // usual ARGB), not from DwmGetColorizationColor - that's the
+            // older Aero-glass API and can visibly drift from what the
+            // modern Fluent UI actually renders, which is exactly why this
+            // read a shade darker than the real Quick Settings panel.
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\Accent");
+                if (key?.GetValue("AccentColorMenu") is int abgr)
+                {
+                    byte b = (byte)((abgr >> 16) & 0xFF);
+                    byte g = (byte)((abgr >> 8) & 0xFF);
+                    byte r = (byte)(abgr & 0xFF);
+                    return Color.FromArgb(255, r, g, b);
+                }
+            }
+            catch { }
+
+            // Fall back to the older DWM colorization color if the modern
+            // accent key isn't available for some reason.
             try
             {
                 DwmGetColorizationColor(out uint argb, out _);
-                byte a = (byte)((argb >> 24) & 0xFF);
                 byte r = (byte)((argb >> 16) & 0xFF);
                 byte g = (byte)((argb >> 8) & 0xFF);
                 byte b = (byte)(argb & 0xFF);
-                // Colorization alpha is usually near-opaque already; force it
-                // fully opaque since we're using this as a solid panel fill.
                 return Color.FromArgb(255, r, g, b);
             }
             catch
