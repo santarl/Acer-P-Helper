@@ -55,6 +55,31 @@ namespace PredatorControlApp
             }
         }
 
+        /// <summary>
+        /// This window is borderless (FormBorderStyle.None) with fully
+        /// custom chrome, so there's no native maximize box to wire up -
+        /// this toggles between the normal compact bounds and a taller
+        /// version using the full screen working height, keeping width
+        /// fixed (the two-column layout has a natural fixed width; growing
+        /// width wouldn't reveal anything new the way growing height does
+        /// for anyone whose screen is too short for the default size).
+        /// </summary>
+        private void ToggleCustomMaximize()
+        {
+            if (_isCustomMaximized)
+            {
+                this.Bounds = _normalBounds;
+                _isCustomMaximized = false;
+            }
+            else
+            {
+                _normalBounds = this.Bounds;
+                var wa = Screen.FromControl(this).WorkingArea;
+                this.Bounds = new Rectangle(this.Left, wa.Top + 10, this.Width, wa.Height - 20);
+                _isCustomMaximized = true;
+            }
+        }
+
         #endregion
 
         #region Win32 Interop — Dark Scrollbar
@@ -119,6 +144,10 @@ namespace PredatorControlApp
 
         private int _cpuTemp, _gpuTemp;
         private DarkScrollPanel _contentPanel = null!;
+        private DarkScrollPanel _contentPanelRight = null!;
+        private Panel _activeColumnPanel = null!;
+        private bool _isCustomMaximized = false;
+        private Rectangle _normalBounds;
 
         private bool? _isPluggedIn;
         private bool? _pendingPluggedIn;
@@ -641,9 +670,12 @@ namespace PredatorControlApp
             this.BackColor = FormBg;
             this.ForeColor = Color.White;
 
-            _formW = S(450);
+            _formW = S(450);          // per-column content width - unchanged, so all existing
+                                       // absolute positioning math within each column stays valid
+            int columnGap = S(16);
+            int windowW = _formW * 2 + columnGap;
             int workH = Screen.PrimaryScreen?.WorkingArea.Height ?? S(1000);
-            this.ClientSize = new Size(_formW, Math.Max(S(400), Math.Min(S(960), workH - 40)));
+            this.ClientSize = new Size(windowW, Math.Max(S(400), Math.Min(S(700), workH - 40)));
             this.FormBorderStyle = FormBorderStyle.None;
             this.StartPosition = FormStartPosition.CenterScreen;
             try { this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
@@ -654,7 +686,7 @@ namespace PredatorControlApp
             int btnH = S(34);
             int y = 0;
 
-            var pnlTitle = new Panel { Height = S(40), Width = _formW, BackColor = Color.FromArgb(18, 18, 21) };
+            var pnlTitle = new Panel { Height = S(40), Width = windowW, BackColor = Color.FromArgb(18, 18, 21) };
             pnlTitle.MouseDown += TitleBar_MouseDown;
             this.Controls.Add(pnlTitle);
             var picIcon = new PictureBox { SizeMode = PictureBoxSizeMode.Zoom, Size = new Size(S(16), S(16)), Location = new Point(pad - S(4), S(12)), BackColor = Color.Transparent };
@@ -666,14 +698,17 @@ namespace PredatorControlApp
             _lblTitle.MouseDown += TitleBar_MouseDown;
             pnlTitle.Controls.Add(_lblTitle);
 
-            var lblClose = new Label { Text = "●", ForeColor = Color.FromArgb(255, 95, 86), Font = new Font("Arial", 12f), AutoSize = true, Location = new Point(_formW - pad - S(4), S(9)), Cursor = Cursors.Hand, BackColor = Color.Transparent };
+            var lblClose = new Label { Text = "●", ForeColor = Color.FromArgb(255, 95, 86), Font = new Font("Arial", 12f), AutoSize = true, Location = new Point(windowW - pad - S(4), S(9)), Cursor = Cursors.Hand, BackColor = Color.Transparent };
             var lblMin = new Label { Text = "●", ForeColor = Color.FromArgb(255, 189, 46), Font = new Font("Arial", 12f), AutoSize = true, Location = new Point(lblClose.Left - S(20), S(9)), Cursor = Cursors.Hand, BackColor = Color.Transparent };
-            
+            var lblMaximize = new Label { Text = "●", ForeColor = Color.FromArgb(39, 201, 63), Font = new Font("Arial", 12f), AutoSize = true, Location = new Point(lblMin.Left - S(20), S(9)), Cursor = Cursors.Hand, BackColor = Color.Transparent };
+
             lblClose.Click += (s, e) => { this.Close(); };
             lblMin.Click += (s, e) => { this.WindowState = FormWindowState.Minimized; };
-            
+            lblMaximize.Click += (s, e) => ToggleCustomMaximize();
+
             pnlTitle.Controls.Add(lblClose);
             pnlTitle.Controls.Add(lblMin);
+            pnlTitle.Controls.Add(lblMaximize);
 
             y = pnlTitle.Bottom;
 
@@ -686,6 +721,18 @@ namespace PredatorControlApp
             _contentPanel.SetDpiScale(_dpiScale);
             this.Controls.Add(_contentPanel);
             _contentPanel.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left;
+
+            _contentPanelRight = new DarkScrollPanel
+            {
+                Location = new Point(_formW + columnGap, y),
+                Size = new Size(_formW + DarkScrollPanel.NativeBarWidth, this.ClientSize.Height - y),
+                BackColor = FormBg
+            };
+            _contentPanelRight.SetDpiScale(_dpiScale);
+            this.Controls.Add(_contentPanelRight);
+            _contentPanelRight.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left;
+
+            _activeColumnPanel = _contentPanel;
 
             y = S(24); 
 
@@ -738,12 +785,12 @@ namespace PredatorControlApp
             _cboAcProfile = new PredatorDropDown { Location = new Point(pad, y), Size = new Size(profileDropW, S(30)) };
             _cboAcProfile.Items.AddRange(new[] { "Don't Change", "Quiet", "Balanced", "Perf", "Turbo" });
             _cboAcProfile.SelectedIndex = 0;
-            _contentPanel.Controls.Add(_cboAcProfile);
+            _activeColumnPanel.Controls.Add(_cboAcProfile);
 
             _cboBatteryProfile = new PredatorDropDown { Location = new Point(pad + profileDropW + gap, y), Size = new Size(profileDropW, S(30)) };
             _cboBatteryProfile.Items.AddRange(new[] { "Don't Change", "Quiet", "Balanced", "Eco" });
             _cboBatteryProfile.SelectedIndex = 0;
-            _contentPanel.Controls.Add(_cboBatteryProfile);
+            _activeColumnPanel.Controls.Add(_cboBatteryProfile);
 
             _cboAcProfile.SelectedIndexChanged += (s, e) =>
             {
@@ -777,12 +824,12 @@ namespace PredatorControlApp
             _cboAcFan = new PredatorDropDown { Location = new Point(pad, y), Size = new Size(profileDropW, S(30)) };
             _cboAcFan.Items.AddRange(new[] { "Don't Change", "Auto", "Max", "Custom" });
             _cboAcFan.SelectedIndex = 0;
-            _contentPanel.Controls.Add(_cboAcFan);
+            _activeColumnPanel.Controls.Add(_cboAcFan);
 
             _cboBatteryFan = new PredatorDropDown { Location = new Point(pad + profileDropW + gap, y), Size = new Size(profileDropW, S(30)) };
             _cboBatteryFan.Items.AddRange(new[] { "Don't Change", "Auto", "Max", "Custom" });
             _cboBatteryFan.SelectedIndex = 0;
-            _contentPanel.Controls.Add(_cboBatteryFan);
+            _activeColumnPanel.Controls.Add(_cboBatteryFan);
 
             _cboAcFan.SelectedIndexChanged += (s, e) =>
             {
@@ -817,8 +864,8 @@ namespace PredatorControlApp
                 Minimum  = 10, Maximum = 100, Value = 50,
                 Visible  = false
             };
-            _contentPanel.Controls.Add(_cpuFanSlider);
-            _contentPanel.Controls.Add(_gpuFanSlider);
+            _activeColumnPanel.Controls.Add(_cpuFanSlider);
+            _activeColumnPanel.Controls.Add(_gpuFanSlider);
 
             _cpuFanSlider.ValueChanged   += (s, e) => _lblCpuFanSpeedHdr.Text = $"CPU FAN: {_cpuFanSlider.Value}%";
             _gpuFanSlider.ValueChanged   += (s, e) => _lblGpuFanSpeedHdr.Text = $"GPU FAN: {_gpuFanSlider.Value}%";
@@ -883,6 +930,16 @@ namespace PredatorControlApp
             _btnMaxHz.Click += (s, e) => ApplyDisplayMode(_maxHz, _btnMaxHz);
 
             y += btnH + S(28);
+
+            // Column switch: everything above this line (telemetry, power
+            // mode, fan control, display refresh) stays in the left column;
+            // everything from here on (battery limit through updates) moves
+            // to the right column. This is the most height-balanced single
+            // cut point across the whole dashboard's sections.
+            int leftColumnFinalY = y;
+            _activeColumnPanel = _contentPanelRight;
+            y = S(24);
+
             MakeSectionHeader("BATTERY CHARGE LIMIT", pad, y);
 
             y += S(24);
@@ -895,7 +952,7 @@ namespace PredatorControlApp
                 Location = new Point(_formW - pad - S(48), y),
                 Size = new Size(S(48), switchH)
             };
-            _contentPanel.Controls.Add(_switchBatteryLimit);
+            _activeColumnPanel.Controls.Add(_switchBatteryLimit);
 
             _switchBatteryLimit.CheckedChanged += (s, e) =>
             {
@@ -911,7 +968,7 @@ namespace PredatorControlApp
                 Location = new Point(_formW - pad - S(48), y),
                 Size = new Size(S(48), switchH)
             };
-            _contentPanel.Controls.Add(_switchBacklightTimeout);
+            _activeColumnPanel.Controls.Add(_switchBacklightTimeout);
 
             _switchBacklightTimeout.CheckedChanged += (s, e) =>
             {
@@ -928,7 +985,7 @@ namespace PredatorControlApp
                 Size = new Size(S(48), switchH),
                 Checked = false
             };
-            _contentPanel.Controls.Add(_switchStartWithWindows);
+            _activeColumnPanel.Controls.Add(_switchStartWithWindows);
 
             _switchStartWithWindows.CheckedChanged += (s, e) =>
             {
@@ -956,7 +1013,7 @@ namespace PredatorControlApp
             _rgbDropDown = new PredatorDropDown { Location = new Point(pad, y), Size = new Size(contentW, dropH) };
             foreach (var name in RgbModeNames) _rgbDropDown.Items.Add(name);
             _rgbDropDown.SelectedIndex = 3; 
-            _contentPanel.Controls.Add(_rgbDropDown);
+            _activeColumnPanel.Controls.Add(_rgbDropDown);
 
             y += dropH + S(28);
             _lblBrightHdr = MakeLabel("BRIGHTNESS: 100%", pad, y, FontSectionHeader, SubHeaderColor);
@@ -965,10 +1022,10 @@ namespace PredatorControlApp
             y += S(24);
             int sliderW = (contentW - gap * 4) / 2;
             _brightnessSlider = new PredatorSlider { Location = new Point(pad, y), Size = new Size(sliderW, S(28)), Minimum = 0, Maximum = 100, Value = 100 };
-            _contentPanel.Controls.Add(_brightnessSlider);
+            _activeColumnPanel.Controls.Add(_brightnessSlider);
             
             _speedSlider = new PredatorSlider { Location = new Point(_formW / 2 + S(10), y), Size = new Size(sliderW, S(28)), Minimum = 1, Maximum = 100, Value = 50 };
-            _contentPanel.Controls.Add(_speedSlider);
+            _activeColumnPanel.Controls.Add(_speedSlider);
 
             _brightnessSlider.ValueChanged += (s, e) => { _lblBrightHdr.Text = $"BRIGHTNESS: {_brightnessSlider.Value}%"; };
             _brightnessSlider.ValueCommitted += (s, e) => { _wmi.SetBrightness((byte)_brightnessSlider.Value); SaveState("Brightness", _brightnessSlider.Value); };
@@ -1119,7 +1176,7 @@ namespace PredatorControlApp
                 Location = new Point(_formW - pad - S(48), y),
                 Size = new Size(S(48), syncSwitchH)
             };
-            _contentPanel.Controls.Add(_switchGameSync);
+            _activeColumnPanel.Controls.Add(_switchGameSync);
 
             _switchGameSync.CheckedChanged += (s, e) =>
             {
@@ -1149,7 +1206,18 @@ namespace PredatorControlApp
             _btnCheckUpdates = MakeButton("⬇  Check for Updates", _formW - pad - updBtnW, y, updBtnW, updBtnH);
             _btnCheckUpdates.Click += async (s, e) => await CheckForUpdatesAsync();
 
-            _contentPanel.AutoScrollMinSize = new Size(0, y + updBtnH + S(50));
+            int rightColumnFinalY = y + updBtnH + S(50);
+            _contentPanel.AutoScrollMinSize = new Size(0, leftColumnFinalY + S(50));
+            _contentPanelRight.AutoScrollMinSize = new Size(0, rightColumnFinalY);
+
+            // Resize the window to fit the taller of the two columns, so
+            // neither needs to scroll in the common case - capped to the
+            // screen's working height for anyone on a short display, where
+            // scrolling remains as a fallback rather than clipping content.
+            int neededContentH = Math.Max(leftColumnFinalY + S(50), rightColumnFinalY);
+            int neededClientH = pnlTitle.Height + neededContentH;
+            int cappedClientH = Math.Min(neededClientH, workH - 40);
+            this.ClientSize = new Size(windowW, Math.Max(S(400), cappedClientH));
         }
 
         private void UpdateRgbControls(int mode)
@@ -1172,21 +1240,21 @@ namespace PredatorControlApp
             {
                 Text = text, Location = new Point(x, y), AutoSize = true, Font = font, ForeColor = color, BackColor = Color.Transparent
             };
-            _contentPanel.Controls.Add(lbl);
+            _activeColumnPanel.Controls.Add(lbl);
             return lbl;
         }
 
         private PredatorButton MakeButton(string text, int x, int y, int width, int height)
         {
             var btn = new PredatorButton { Text = text, Location = new Point(x, y), Size = new Size(width, height) };
-            _contentPanel.Controls.Add(btn);
+            _activeColumnPanel.Controls.Add(btn);
             return btn;
         }
 
         private void AddSeparator(int y)
         {
             int pad = S(24);
-            _contentPanel.Controls.Add(new Panel { Location = new Point(pad, y), Size = new Size(_formW - pad * 2, 1), BackColor = SeparatorColor });
+            _activeColumnPanel.Controls.Add(new Panel { Location = new Point(pad, y), Size = new Size(_formW - pad * 2, 1), BackColor = SeparatorColor });
         }
 
         private void CenterV(Label lbl, int controlY, int controlH)
