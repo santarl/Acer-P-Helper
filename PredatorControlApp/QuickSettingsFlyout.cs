@@ -30,6 +30,8 @@ namespace PredatorControlApp
         private readonly Panel[] _zoneSwatches = new Panel[4];
         private PredatorDropDown _modeDropDown = null!;
         private Button _btnApplyAll = null!;
+        private Button _btnTurboColor = null!;
+        private Button _btnNormalColor = null!;
         private PredatorSlider _brightnessSlider = null!;
         private ColorDialog _colorPicker = new();
         private bool _rgbExpanded;
@@ -39,7 +41,7 @@ namespace PredatorControlApp
         private readonly System.Windows.Forms.Timer _sensorTimer = new() { Interval = 2000 };
 
         private const int CollapsedHeight = 300;
-        private const int ExpandedHeight = 490;
+        private const int ExpandedHeight = 530;
         private const int PanelWidth = 340;
 
         private bool _suppressDeactivate;
@@ -181,7 +183,7 @@ namespace PredatorControlApp
             Controls.AddRange(new Control[] { _tileTurbo, _tileRgb, _tileBacklight, _tileBattery });
 
             int expandY = pad * 3 + tileH * 2;
-            _rgbExpandPanel = new Panel { Location = new Point(pad, expandY), Size = new Size(PanelWidth - pad * 2, 180), Visible = false };
+            _rgbExpandPanel = new Panel { Location = new Point(pad, expandY), Size = new Size(PanelWidth - pad * 2, 220), Visible = false };
 
             _modeDropDown = new PredatorDropDown { Location = new Point(0, 0), Size = new Size(PanelWidth - pad * 2, 30) };
             foreach (var name in Form1.RgbModeNames) _modeDropDown.Items.Add(name);
@@ -264,16 +266,82 @@ namespace PredatorControlApp
             };
             _rgbExpandPanel.Controls.Add(_btnApplyAll);
 
+            // Quick per-state color pickers - the direct path from the
+            // flyout, as opposed to "set up your RGB, then Save as Turbo/
+            // Normal Look" on the main dashboard. Background tint previews
+            // the saved color for each (refreshed in RefreshTiles).
+            int colorBtnGap = 8;
+            int colorBtnW = (PanelWidth - pad * 2 - colorBtnGap) / 2;
+            int colorBtnY = swatchY + swatchSize + 42;
+
+            _btnTurboColor = new Button
+            {
+                Text = "Turbo Color",
+                FlatStyle = FlatStyle.Flat,
+                ForeColor = Color.White,
+                UseVisualStyleBackColor = false,
+                Location = new Point(0, colorBtnY),
+                Size = new Size(colorBtnW, 30),
+                Cursor = Cursors.Hand
+            };
+            _btnTurboColor.FlatAppearance.BorderSize = 1;
+            _btnTurboColor.FlatAppearance.BorderColor = Color.White;
+            _btnTurboColor.Click += (s, e) =>
+            {
+                var (tm, tr, tg, tb) = _wmi.TurboProfile;
+                _colorPicker.Color = _wmi.HasTurboProfile ? Color.FromArgb(tr, tg, tb) : Color.FromArgb(255, 60, 60);
+                _suppressDeactivate = true;
+                var result = _colorPicker.ShowDialog(this);
+                _suppressDeactivate = false;
+                if (result == DialogResult.OK)
+                {
+                    var c = _colorPicker.Color;
+                    _owner.SetTurboColorFromFlyout(c.R, c.G, c.B);
+                    _btnTurboColor.BackColor = c;
+                    RefreshTiles();
+                }
+            };
+            _rgbExpandPanel.Controls.Add(_btnTurboColor);
+
+            _btnNormalColor = new Button
+            {
+                Text = "Normal Color",
+                FlatStyle = FlatStyle.Flat,
+                ForeColor = Color.White,
+                UseVisualStyleBackColor = false,
+                Location = new Point(colorBtnW + colorBtnGap, colorBtnY),
+                Size = new Size(colorBtnW, 30),
+                Cursor = Cursors.Hand
+            };
+            _btnNormalColor.FlatAppearance.BorderSize = 1;
+            _btnNormalColor.FlatAppearance.BorderColor = Color.White;
+            _btnNormalColor.Click += (s, e) =>
+            {
+                var (nm, nr, ng, nb) = _wmi.NormalProfile;
+                _colorPicker.Color = _wmi.HasNormalProfile ? Color.FromArgb(nr, ng, nb) : Color.FromArgb(60, 150, 255);
+                _suppressDeactivate = true;
+                var result = _colorPicker.ShowDialog(this);
+                _suppressDeactivate = false;
+                if (result == DialogResult.OK)
+                {
+                    var c = _colorPicker.Color;
+                    _owner.SetNormalColorFromFlyout(c.R, c.G, c.B);
+                    _btnNormalColor.BackColor = c;
+                    RefreshTiles();
+                }
+            };
+            _rgbExpandPanel.Controls.Add(_btnNormalColor);
+
             var lblBrightness = new Label
             {
                 Text = "Brightness",
                 ForeColor = Color.White,
-                Location = new Point(0, swatchY + swatchSize + 44),
+                Location = new Point(0, colorBtnY + 42),
                 AutoSize = true
             };
             _brightnessSlider = new PredatorSlider
             {
-                Location = new Point(0, swatchY + swatchSize + 64),
+                Location = new Point(0, colorBtnY + 62),
                 Size = new Size(PanelWidth - pad * 2, 28),
                 Minimum = 0,
                 Maximum = 100,
@@ -364,6 +432,12 @@ namespace PredatorControlApp
             _tileRgb.Invalidate();
             _tileBacklight.Invalidate();
             _tileBattery.Invalidate();
+
+            var (tm, tr, tg, tb) = _wmi.TurboProfile;
+            _btnTurboColor.BackColor = _wmi.HasTurboProfile ? Color.FromArgb(tr, tg, tb) : DwmAccentColor.Darken(BackColor, 0.15f);
+
+            var (nm, nr, ng, nb) = _wmi.NormalProfile;
+            _btnNormalColor.BackColor = _wmi.HasNormalProfile ? Color.FromArgb(nr, ng, nb) : DwmAccentColor.Darken(BackColor, 0.15f);
         }
 
         private void RefreshSensors()

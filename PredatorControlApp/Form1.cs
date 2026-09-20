@@ -1145,18 +1145,14 @@ namespace PredatorControlApp
             btnSaveTurboLook.Click += (s, e) =>
             {
                 _wmi.SaveCurrentAsTurboProfile();
-                var (m, r, g, b) = _wmi.TurboProfile;
-                SaveState("TurboProfile_Mode", m);
-                SaveState("TurboProfile_R", r); SaveState("TurboProfile_G", g); SaveState("TurboProfile_B", b);
+                PersistTurboProfile();
                 MessageBox.Show(this, "Current RGB look saved for Turbo mode.", "Predator Control",
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
             };
             btnSaveNormalLook.Click += (s, e) =>
             {
                 _wmi.SaveCurrentAsNormalProfile();
-                var (m, r, g, b) = _wmi.NormalProfile;
-                SaveState("NormalProfile_Mode", m);
-                SaveState("NormalProfile_R", r); SaveState("NormalProfile_G", g); SaveState("NormalProfile_B", b);
+                PersistNormalProfile();
                 MessageBox.Show(this, "Current RGB look saved for normal (non-turbo) mode.", "Predator Control",
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
             };
@@ -1458,6 +1454,42 @@ namespace PredatorControlApp
             {
                 _isUpdatingBattery = false;
             }
+        }
+
+        internal void PersistTurboProfile()
+        {
+            var (m, r, g, b) = _wmi.TurboProfile;
+            SaveState("TurboProfile_Mode", m);
+            SaveState("TurboProfile_R", r); SaveState("TurboProfile_G", g); SaveState("TurboProfile_B", b);
+        }
+
+        internal void PersistNormalProfile()
+        {
+            var (m, r, g, b) = _wmi.NormalProfile;
+            SaveState("NormalProfile_Mode", m);
+            SaveState("NormalProfile_R", r); SaveState("NormalProfile_G", g); SaveState("NormalProfile_B", b);
+        }
+
+        /// <summary>
+        /// Sets the turbo/normal profile color directly (always static
+        /// mode) and persists it - the quick path from the flyout, as
+        /// opposed to "set up your RGB, then Save as Turbo/Normal Look" on
+        /// the main dashboard. If that state is the one currently active,
+        /// applies it immediately for instant feedback; otherwise just
+        /// saves it for the next time that state is entered.
+        /// </summary>
+        internal void SetTurboColorFromFlyout(byte r, byte g, byte b)
+        {
+            _wmi.SetTurboProfileRaw(0, r, g, b);
+            PersistTurboProfile();
+            if (IsTurboOn) _wmi.ApplyTurboProfile();
+        }
+
+        internal void SetNormalColorFromFlyout(byte r, byte g, byte b)
+        {
+            _wmi.SetNormalProfileRaw(0, r, g, b);
+            PersistNormalProfile();
+            if (!IsTurboOn) _wmi.ApplyNormalProfile();
         }
 
         internal void ApplyBacklightTimeout(bool enabled)
