@@ -1458,36 +1458,54 @@ namespace PredatorControlApp
 
         internal void PersistTurboProfile()
         {
-            var (m, r, g, b) = _wmi.TurboProfile;
-            SaveState("TurboProfile_Mode", m);
-            SaveState("TurboProfile_R", r); SaveState("TurboProfile_G", g); SaveState("TurboProfile_B", b);
+            SaveState("TurboProfileConfigured", _wmi.HasTurboProfile ? 1 : 0);
+            for (int i = 0; i < 4; i++)
+            {
+                var (r, g, b) = _wmi.GetTurboZoneColor(i);
+                SaveState($"TurboZone{i}_R", r); SaveState($"TurboZone{i}_G", g); SaveState($"TurboZone{i}_B", b);
+            }
         }
 
         internal void PersistNormalProfile()
         {
-            var (m, r, g, b) = _wmi.NormalProfile;
-            SaveState("NormalProfile_Mode", m);
-            SaveState("NormalProfile_R", r); SaveState("NormalProfile_G", g); SaveState("NormalProfile_B", b);
+            SaveState("NormalProfileConfigured", _wmi.HasNormalProfile ? 1 : 0);
+            for (int i = 0; i < 4; i++)
+            {
+                var (r, g, b) = _wmi.GetNormalZoneColor(i);
+                SaveState($"NormalZone{i}_R", r); SaveState($"NormalZone{i}_G", g); SaveState($"NormalZone{i}_B", b);
+            }
         }
 
         /// <summary>
-        /// Sets the turbo/normal profile color directly (always static
-        /// mode) and persists it - the quick path from the flyout, as
-        /// opposed to "set up your RGB, then Save as Turbo/Normal Look" on
-        /// the main dashboard. If that state is the one currently active,
-        /// applies it immediately for instant feedback; otherwise just
-        /// saves it for the next time that state is entered.
+        /// Sets one zone's color within the Turbo/Normal tab and persists
+        /// it - the direct path from the flyout's tabbed zone editor. If
+        /// that state is the one currently active, applies it immediately
+        /// for instant feedback; otherwise just saves it for next time.
         /// </summary>
-        internal void SetTurboColorFromFlyout(byte r, byte g, byte b)
+        internal void SetTurboZoneColorFromFlyout(int zoneIndex, byte r, byte g, byte b)
         {
-            _wmi.SetTurboProfileRaw(0, r, g, b);
+            _wmi.SetTurboZoneColor(zoneIndex, r, g, b);
             PersistTurboProfile();
             if (IsTurboOn) _wmi.ApplyTurboProfile();
         }
 
-        internal void SetNormalColorFromFlyout(byte r, byte g, byte b)
+        internal void SetNormalZoneColorFromFlyout(int zoneIndex, byte r, byte g, byte b)
         {
-            _wmi.SetNormalProfileRaw(0, r, g, b);
+            _wmi.SetNormalZoneColor(zoneIndex, r, g, b);
+            PersistNormalProfile();
+            if (!IsTurboOn) _wmi.ApplyNormalProfile();
+        }
+
+        internal void SetAllTurboZonesFromFlyout(byte r, byte g, byte b)
+        {
+            _wmi.SetAllTurboZones(r, g, b);
+            PersistTurboProfile();
+            if (IsTurboOn) _wmi.ApplyTurboProfile();
+        }
+
+        internal void SetAllNormalZonesFromFlyout(byte r, byte g, byte b)
+        {
+            _wmi.SetAllNormalZones(r, g, b);
             PersistNormalProfile();
             if (!IsTurboOn) _wmi.ApplyNormalProfile();
         }
@@ -1935,24 +1953,31 @@ namespace PredatorControlApp
 
                 // Restore saved turbo/normal RGB "looks" if the user has set
                 // either up - this only restores the definitions themselves,
-                // it does not force an RGB change on startup. -1 (the
-                // GetInt fallback) means "not configured yet."
-                int turboProfileMode = GetInt(key, "TurboProfile_Mode", -1, -1, 7);
-                if (turboProfileMode >= 0)
+                // it does not force an RGB change on startup.
+                bool turboConfigured = GetInt(key, "TurboProfileConfigured", 0, 0, 1) == 1;
+                if (turboConfigured)
                 {
-                    byte tr = (byte)GetInt(key, "TurboProfile_R", 0, 0, 255);
-                    byte tg = (byte)GetInt(key, "TurboProfile_G", 150, 0, 255);
-                    byte tb = (byte)GetInt(key, "TurboProfile_B", 255, 0, 255);
-                    _wmi.SetTurboProfileRaw(turboProfileMode, tr, tg, tb);
+                    for (int i = 0; i < 4; i++)
+                    {
+                        byte tr = (byte)GetInt(key, $"TurboZone{i}_R", 255, 0, 255);
+                        byte tg = (byte)GetInt(key, $"TurboZone{i}_G", 60, 0, 255);
+                        byte tb = (byte)GetInt(key, $"TurboZone{i}_B", 60, 0, 255);
+                        _wmi.SetTurboZoneRaw(i, tr, tg, tb);
+                    }
+                    _wmi.MarkTurboProfileConfigured();
                 }
 
-                int normalProfileMode = GetInt(key, "NormalProfile_Mode", -1, -1, 7);
-                if (normalProfileMode >= 0)
+                bool normalConfigured = GetInt(key, "NormalProfileConfigured", 0, 0, 1) == 1;
+                if (normalConfigured)
                 {
-                    byte nr = (byte)GetInt(key, "NormalProfile_R", 0, 0, 255);
-                    byte ng = (byte)GetInt(key, "NormalProfile_G", 150, 0, 255);
-                    byte nb = (byte)GetInt(key, "NormalProfile_B", 255, 0, 255);
-                    _wmi.SetNormalProfileRaw(normalProfileMode, nr, ng, nb);
+                    for (int i = 0; i < 4; i++)
+                    {
+                        byte nr = (byte)GetInt(key, $"NormalZone{i}_R", 60, 0, 255);
+                        byte ng = (byte)GetInt(key, $"NormalZone{i}_G", 150, 0, 255);
+                        byte nb = (byte)GetInt(key, $"NormalZone{i}_B", 255, 0, 255);
+                        _wmi.SetNormalZoneRaw(i, nr, ng, nb);
+                    }
+                    _wmi.MarkNormalProfileConfigured();
                 }
             }
             catch { }

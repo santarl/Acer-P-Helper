@@ -75,68 +75,119 @@ namespace PredatorControlApp
             ApplyLightingMode(0);
         }
 
-        // Optional turbo/normal RGB "looks" - a single mode+color pair for
-        // each, not per-zone (matching how the user described this: "a
-        // turbo colour and mode" and "a non-turbo colour and mode",
-        // singular). Mode -1 means "not configured yet" - ToggleTurbo falls
-        // back to just restoring whatever was active before its transient
-        // flourish animation in that case, rather than forcing an unwanted
-        // RGB change before the user has actually set either look up.
-        private int _turboProfileMode = -1;
-        private byte _turboProfileR, _turboProfileG, _turboProfileB;
-        private int _normalProfileMode = -1;
-        private byte _normalProfileR, _normalProfileG, _normalProfileB;
+        // Turbo/normal RGB "looks" - each a full 4-zone color set, matching
+        // the same richness as the live per-zone editor (not a single
+        // forced color across all zones). _turboProfileConfigured/
+        // _normalProfileConfigured track "not set up yet" explicitly, since
+        // the zone-color arrays always have SOME value (a sensible default)
+        // even before the user has touched either tab - ToggleTurbo falls
+        // back to restoring whatever was active before its transient
+        // flourish animation when a profile isn't configured, rather than
+        // forcing an unwanted RGB change.
+        private readonly (byte R, byte G, byte B)[] _turboZoneColors =
+        {
+            (255, 60, 60), (255, 60, 60), (255, 60, 60), (255, 60, 60)
+        };
+        private readonly (byte R, byte G, byte B)[] _normalZoneColors =
+        {
+            (60, 150, 255), (60, 150, 255), (60, 150, 255), (60, 150, 255)
+        };
+        private bool _turboProfileConfigured;
+        private bool _normalProfileConfigured;
 
-        public bool HasTurboProfile => _turboProfileMode >= 0;
-        public bool HasNormalProfile => _normalProfileMode >= 0;
+        public bool HasTurboProfile => _turboProfileConfigured;
+        public bool HasNormalProfile => _normalProfileConfigured;
 
+        public (byte R, byte G, byte B) GetTurboZoneColor(int zoneIndex) =>
+            zoneIndex >= 0 && zoneIndex < 4 ? _turboZoneColors[zoneIndex] : ((byte)0, (byte)0, (byte)0);
+
+        public (byte R, byte G, byte B) GetNormalZoneColor(int zoneIndex) =>
+            zoneIndex >= 0 && zoneIndex < 4 ? _normalZoneColors[zoneIndex] : ((byte)0, (byte)0, (byte)0);
+
+        public void SetTurboZoneColor(int zoneIndex, byte r, byte g, byte b)
+        {
+            if (zoneIndex < 0 || zoneIndex > 3) return;
+            _turboZoneColors[zoneIndex] = (r, g, b);
+            _turboProfileConfigured = true;
+        }
+
+        public void SetNormalZoneColor(int zoneIndex, byte r, byte g, byte b)
+        {
+            if (zoneIndex < 0 || zoneIndex > 3) return;
+            _normalZoneColors[zoneIndex] = (r, g, b);
+            _normalProfileConfigured = true;
+        }
+
+        public void SetAllTurboZones(byte r, byte g, byte b)
+        {
+            for (int i = 0; i < 4; i++) _turboZoneColors[i] = (r, g, b);
+            _turboProfileConfigured = true;
+        }
+
+        public void SetAllNormalZones(byte r, byte g, byte b)
+        {
+            for (int i = 0; i < 4; i++) _normalZoneColors[i] = (r, g, b);
+            _normalProfileConfigured = true;
+        }
+
+        /// <summary>
+        /// Snapshots the current live per-zone colors as the Turbo/Normal
+        /// look - the dashboard's "Save as Turbo/Normal Look" buttons, now
+        /// preserving full per-zone detail instead of collapsing to one
+        /// representative color.
+        /// </summary>
         public void SaveCurrentAsTurboProfile()
         {
-            _turboProfileMode = _lastMode;
-            (_turboProfileR, _turboProfileG, _turboProfileB) = CurrentRepresentativeColor();
+            for (int i = 0; i < 4; i++) _turboZoneColors[i] = _zoneColors[i];
+            _turboProfileConfigured = true;
         }
 
         public void SaveCurrentAsNormalProfile()
         {
-            _normalProfileMode = _lastMode;
-            (_normalProfileR, _normalProfileG, _normalProfileB) = CurrentRepresentativeColor();
+            for (int i = 0; i < 4; i++) _normalZoneColors[i] = _zoneColors[i];
+            _normalProfileConfigured = true;
         }
 
         /// <summary>
-        /// LastR/G/B only reflect colors set via SetStaticColor/SetRgbMode -
-        /// SetZoneColor (the per-zone swatches) never touches them, so
-        /// they'd be stale leftover defaults for anyone using per-zone
-        /// colors. For static mode, zone 0's actual current color is the
-        /// meaningful representative value instead; for effect modes,
-        /// LastR/G/B are always accurate since those only ever get set via
-        /// SetRgbMode.
+        /// Applies a saved look by writing each zone through SetZoneColor,
+        /// which also updates the live per-zone cache - so after applying,
+        /// _zoneColors correctly reflects what's now actually on the
+        /// keyboard, same as any other zone-color change.
         /// </summary>
-        private (byte, byte, byte) CurrentRepresentativeColor() =>
-            _lastMode == 0 ? _zoneColors[0] : (_lastR, _lastG, _lastB);
-
         public void ApplyTurboProfile()
         {
-            if (HasTurboProfile) ApplyRgbSnapshot(_turboProfileMode, _turboProfileR, _turboProfileG, _turboProfileB, _brightness, _speed);
+            if (!_turboProfileConfigured) return;
+            for (int i = 0; i < 4; i++)
+            {
+                var (r, g, b) = _turboZoneColors[i];
+                SetZoneColor(i, r, g, b);
+            }
         }
 
         public void ApplyNormalProfile()
         {
-            if (HasNormalProfile) ApplyRgbSnapshot(_normalProfileMode, _normalProfileR, _normalProfileG, _normalProfileB, _brightness, _speed);
+            if (!_normalProfileConfigured) return;
+            for (int i = 0; i < 4; i++)
+            {
+                var (r, g, b) = _normalZoneColors[i];
+                SetZoneColor(i, r, g, b);
+            }
         }
 
         /// <summary>For registry persistence (Form1's SaveState/LoadMemory).</summary>
-        public (int mode, byte r, byte g, byte b) TurboProfile => (_turboProfileMode, _turboProfileR, _turboProfileG, _turboProfileB);
-        public (int mode, byte r, byte g, byte b) NormalProfile => (_normalProfileMode, _normalProfileR, _normalProfileG, _normalProfileB);
-
-        public void SetTurboProfileRaw(int mode, byte r, byte g, byte b)
+        public void SetTurboZoneRaw(int zoneIndex, byte r, byte g, byte b)
         {
-            _turboProfileMode = mode; _turboProfileR = r; _turboProfileG = g; _turboProfileB = b;
+            if (zoneIndex >= 0 && zoneIndex < 4) _turboZoneColors[zoneIndex] = (r, g, b);
         }
 
-        public void SetNormalProfileRaw(int mode, byte r, byte g, byte b)
+        public void SetNormalZoneRaw(int zoneIndex, byte r, byte g, byte b)
         {
-            _normalProfileMode = mode; _normalProfileR = r; _normalProfileG = g; _normalProfileB = b;
+            if (zoneIndex >= 0 && zoneIndex < 4) _normalZoneColors[zoneIndex] = (r, g, b);
         }
+
+        public void MarkTurboProfileConfigured() => _turboProfileConfigured = true;
+        public void MarkNormalProfileConfigured() => _normalProfileConfigured = true;
+
         public byte Brightness => _brightness;
         public byte Speed => _speed;
         public byte Direction => _direction;
