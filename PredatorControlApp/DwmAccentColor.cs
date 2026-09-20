@@ -23,12 +23,29 @@ namespace PredatorControlApp
         /// </summary>
         public static Color GetAccentColor(Color fallback)
         {
-            // Quick Settings and the Start menu source their tint from
-            // AccentColorMenu (ABGR, note the reversed byte order vs the
-            // usual ARGB), not from DwmGetColorizationColor - that's the
-            // older Aero-glass API and can visibly drift from what the
-            // modern Fluent UI actually renders, which is exactly why this
-            // read a shade darker than the real Quick Settings panel.
+            // These registry values are undocumented, so matching exactly
+            // what Quick Settings renders has been trial and error:
+            // DwmGetColorizationColor (the old Aero-glass API) read a shade
+            // too dark; AccentColorMenu read a shade too light - it's
+            // apparently a lightened UI-highlight variant, not the raw base
+            // color. AccentPalette stores the full tonal ramp Windows
+            // derives from the user's chosen accent (7 colors: light3,
+            // light2, light1, neutral/base, dark1, dark2, dark3, each 4
+            // bytes ABGR) - index 3 (byte offset 12) is that neutral/base
+            // entry, the closest match to "the accent color" as such.
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\Accent");
+                if (key?.GetValue("AccentPalette") is byte[] palette && palette.Length >= 16)
+                {
+                    byte r = palette[12];
+                    byte g = palette[13];
+                    byte b = palette[14];
+                    return Color.FromArgb(255, r, g, b);
+                }
+            }
+            catch { }
+
             try
             {
                 using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\Accent");

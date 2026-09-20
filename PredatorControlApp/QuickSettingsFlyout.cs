@@ -294,18 +294,24 @@ namespace PredatorControlApp
                 }
             };
             _rgbExpandPanel.Controls.Add(_btnApplyAll);
-            int colorBtnY = swatchY + swatchSize + 8 + 26 + 16; // below the apply-all button, not overlapping it
+
+            // Position directly from the apply-all button's actual bottom
+            // edge, not a fixed offset - the previous "+42/+62" carried a
+            // leftover gap sized for the old single Turbo/Normal color
+            // buttons (removed when this became tabs), which is exactly
+            // what was leaving visible empty space above Brightness.
+            int afterApplyAllY = _btnApplyAll.Bottom + 16;
 
             var lblBrightness = new Label
             {
                 Text = "Brightness",
                 ForeColor = Color.White,
-                Location = new Point(0, colorBtnY + 42),
+                Location = new Point(0, afterApplyAllY),
                 AutoSize = true
             };
             _brightnessSlider = new PredatorSlider
             {
-                Location = new Point(0, colorBtnY + 62),
+                Location = new Point(0, afterApplyAllY + 20),
                 Size = new Size(PanelWidth - pad * 2, 28),
                 Minimum = 0,
                 Maximum = 100,
