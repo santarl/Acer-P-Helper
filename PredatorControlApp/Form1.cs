@@ -930,6 +930,20 @@ namespace PredatorControlApp
             _btnMaxHz.Click += (s, e) => ApplyDisplayMode(_maxHz, _btnMaxHz);
 
             y += btnH + S(28);
+
+            // Column switch: telemetry/power/fan/display stay in the left
+            // column; battery limit onward moves to the right column here.
+            // (Previously tried moving Battery Charge Limit itself to the
+            // left column to rebalance - that overshot, since its ~200px
+            // height was close to the FULL original imbalance, so moving
+            // the whole section just flipped which side was too tall
+            // instead of landing in the middle. Battery Charge Limit stays
+            // here; Game Sync moves to the left column instead, further
+            // down, as a smaller and more precisely-sized adjustment.)
+            int leftColumnFirstPartY = y;
+            _activeColumnPanel = _contentPanelRight;
+            y = S(24);
+
             MakeSectionHeader("BATTERY CHARGE LIMIT", pad, y);
 
             y += S(24);
@@ -996,19 +1010,6 @@ namespace PredatorControlApp
             };
 
             y += switchH + S(28);
-
-            // Column switch, moved here (was right before Battery Charge
-            // Limit) based on the actual rendered result: the line-count
-            // estimate used to pick the original cut point was measurably
-            // wrong once actually built - left column had substantial dead
-            // space below Display Refresh Rate, right column needed to
-            // scroll. Battery Charge Limit is a fairly compact, self-
-            // contained block, so moving it to the left column is the
-            // smallest change that closes most of the gap.
-            int leftColumnFinalY = y;
-            _activeColumnPanel = _contentPanelRight;
-            y = S(24);
-
             MakeSectionHeader("KEYBOARD RGB MODE", pad, y);
             
             y += S(24);
@@ -1161,6 +1162,17 @@ namespace PredatorControlApp
             };
 
             y += btnH + S(28);
+
+            // Move Game Sync to the left column here - a compact, self-
+            // contained section (~120px), a more precisely-sized adjustment
+            // than moving all of Battery Charge Limit was. Left column's
+            // cursor resumes exactly where it left off after Display
+            // Refresh Rate; right column's position is saved so Updates
+            // can resume correctly afterward.
+            int rightColumnBeforeGameSyncY = y;
+            _activeColumnPanel = _contentPanel;
+            y = leftColumnFirstPartY;
+
             AddSeparator(y);
             y += S(20);
             MakeSectionHeader("GAME SYNC", pad, y);
@@ -1192,6 +1204,10 @@ namespace PredatorControlApp
             };
 
             y += btnH + S(24);
+            int leftColumnFinalY = y;
+
+            _activeColumnPanel = _contentPanelRight;
+            y = rightColumnBeforeGameSyncY;
             AddSeparator(y);
 
             y += S(20);
