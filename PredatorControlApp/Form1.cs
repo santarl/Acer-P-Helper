@@ -930,16 +930,6 @@ namespace PredatorControlApp
             _btnMaxHz.Click += (s, e) => ApplyDisplayMode(_maxHz, _btnMaxHz);
 
             y += btnH + S(28);
-
-            // Column switch: everything above this line (telemetry, power
-            // mode, fan control, display refresh) stays in the left column;
-            // everything from here on (battery limit through updates) moves
-            // to the right column. This is the most height-balanced single
-            // cut point across the whole dashboard's sections.
-            int leftColumnFinalY = y;
-            _activeColumnPanel = _contentPanelRight;
-            y = S(24);
-
             MakeSectionHeader("BATTERY CHARGE LIMIT", pad, y);
 
             y += S(24);
@@ -1006,6 +996,19 @@ namespace PredatorControlApp
             };
 
             y += switchH + S(28);
+
+            // Column switch, moved here (was right before Battery Charge
+            // Limit) based on the actual rendered result: the line-count
+            // estimate used to pick the original cut point was measurably
+            // wrong once actually built - left column had substantial dead
+            // space below Display Refresh Rate, right column needed to
+            // scroll. Battery Charge Limit is a fairly compact, self-
+            // contained block, so moving it to the left column is the
+            // smallest change that closes most of the gap.
+            int leftColumnFinalY = y;
+            _activeColumnPanel = _contentPanelRight;
+            y = S(24);
+
             MakeSectionHeader("KEYBOARD RGB MODE", pad, y);
             
             y += S(24);
