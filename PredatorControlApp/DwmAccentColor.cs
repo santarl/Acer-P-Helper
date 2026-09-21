@@ -23,24 +23,22 @@ namespace PredatorControlApp
         /// </summary>
         public static Color GetAccentColor(Color fallback)
         {
-            // These registry values are undocumented, so matching exactly
-            // what Quick Settings renders has been trial and error:
-            // DwmGetColorizationColor (the old Aero-glass API) read a shade
-            // too dark; AccentColorMenu read a shade too light - it's
-            // apparently a lightened UI-highlight variant, not the raw base
-            // color. AccentPalette stores the full tonal ramp Windows
-            // derives from the user's chosen accent (7 colors: light3,
-            // light2, light1, neutral/base, dark1, dark2, dark3, each 4
-            // bytes ABGR) - index 3 (byte offset 12) is that neutral/base
-            // entry, the closest match to "the accent color" as such.
+            // Confirmed against the real Quick Settings panel via a
+            // diagnostic script that printed every candidate as an actual
+            // color swatch: it's AccentPalette index 5 (Dark2), not the
+            // Neutral/base entry (index 3) - Windows apparently renders
+            // Quick Settings' background using a darker tonal variant, not
+            // the raw accent color itself. AccentPalette stores 7 colors
+            // (light3, light2, light1, neutral, dark1, dark2, dark3), each
+            // 4 bytes RGBA - so Dark2 is byte offset 5*4=20.
             try
             {
                 using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\Accent");
-                if (key?.GetValue("AccentPalette") is byte[] palette && palette.Length >= 16)
+                if (key?.GetValue("AccentPalette") is byte[] palette && palette.Length >= 24)
                 {
-                    byte r = palette[12];
-                    byte g = palette[13];
-                    byte b = palette[14];
+                    byte r = palette[20];
+                    byte g = palette[21];
+                    byte b = palette[22];
                     return Color.FromArgb(255, r, g, b);
                 }
             }
