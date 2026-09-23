@@ -211,8 +211,6 @@ namespace PredatorControlApp
 
         private PredatorSwitch _switchBatteryLimit = null!;
         private Label _lblBatteryStatus = null!;
-        private PredatorSwitch _switchBacklightTimeout = null!;
-        private Label _lblBacklightTimeoutStatus = null!;
         private ToolStripMenuItem _trayBacklightTimeout = null!;
         private ToolStripMenuItem _trayBacklightOn = null!, _trayBacklightOff = null!;
         private bool _isUpdatingBacklightTimeout;
@@ -644,7 +642,7 @@ namespace PredatorControlApp
             _trayBatteryLimit100 = new ToolStripMenuItem("Full Charge (100%)", null, (s, e) => ApplyBatteryLimit(false));
             _trayBatteryMenu.DropDownItems.AddRange([_trayBatteryLimit80, _trayBatteryLimit100]);
 
-            _trayBacklightTimeout = new ToolStripMenuItem("  Keyboard Backlight");
+            _trayBacklightTimeout = new ToolStripMenuItem("  Backlight Timeout");
             _trayBacklightOn = new ToolStripMenuItem("On", null, (s, e) => ApplyBacklightTimeout(true));
             _trayBacklightOff = new ToolStripMenuItem("Off", null, (s, e) => ApplyBacklightTimeout(false));
             _trayBacklightTimeout.DropDownItems.AddRange([_trayBacklightOn, _trayBacklightOff]);
@@ -961,22 +959,6 @@ namespace PredatorControlApp
             _switchBatteryLimit.CheckedChanged += (s, e) =>
             {
                 ApplyBatteryLimit(_switchBatteryLimit.Checked);
-            };
-
-            y += switchH + S(12);
-            _lblBacklightTimeoutStatus = MakeLabel("Keyboard Backlight Auto-Off", pad, y, FontBody, SubHeaderColor);
-            CenterV(_lblBacklightTimeoutStatus, y, switchH);
-
-            _switchBacklightTimeout = new PredatorSwitch
-            {
-                Location = new Point(_formW - pad - S(48), y),
-                Size = new Size(S(48), switchH)
-            };
-            _activeColumnPanel.Controls.Add(_switchBacklightTimeout);
-
-            _switchBacklightTimeout.CheckedChanged += (s, e) =>
-            {
-                ApplyBacklightTimeout(_switchBacklightTimeout.Checked);
             };
 
             y += switchH + S(12);
@@ -1538,16 +1520,8 @@ namespace PredatorControlApp
             {
                 if (_wmi.SetBacklightTimeout(enabled))
                 {
-                    if (_switchBacklightTimeout.Checked != enabled)
-                        _switchBacklightTimeout.Checked = enabled;
-
-                    _lblBacklightTimeoutStatus.Text = enabled ? "Auto-Off After 30s" : "Always On";
                     CheckTrayItem(enabled ? _trayBacklightOn : _trayBacklightOff, _trayBacklightOn, _trayBacklightOff);
                     SaveState("BacklightTimeout", enabled ? 1 : 0);
-                }
-                else
-                {
-                    _switchBacklightTimeout.Checked = !enabled;
                 }
             }
             finally
@@ -1965,8 +1939,6 @@ namespace PredatorControlApp
                 _wmi.SetBacklightTimeout(backlightTimeoutOn);
 
                 _isUpdatingBacklightTimeout = true;
-                _switchBacklightTimeout.Checked = backlightTimeoutOn;
-                _lblBacklightTimeoutStatus.Text = backlightTimeoutOn ? "Auto-Off After 30s" : "Always On";
                 CheckTrayItem(backlightTimeoutOn ? _trayBacklightOn : _trayBacklightOff, _trayBacklightOn, _trayBacklightOff);
                 _isUpdatingBacklightTimeout = false;
 
