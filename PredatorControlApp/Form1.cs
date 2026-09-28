@@ -299,7 +299,25 @@ namespace PredatorControlApp
             _timer.Start();
 
             SystemEvents.PowerModeChanged += OnPowerModeChanged;
-            this.FormClosed += (s, e) => SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+            SystemEvents.SessionSwitch += OnSessionSwitch;
+            this.FormClosed += (s, e) =>
+            {
+                SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+                SystemEvents.SessionSwitch -= OnSessionSwitch;
+            };
+
+            _rgbReapplyTimer.Tick += (s, e) =>
+            {
+                _rgbReapplyTimer.Stop();
+                if (_isClosing || IsDisposed) return;
+                try { _wmi.ReapplyCurrentRgb(); } catch { }
+                if (--_rgbReapplyAttemptsLeft > 0)
+                {
+                    _rgbReapplyTimer.Interval = 8000;
+                    _rgbReapplyTimer.Start();
+                }
+            };
+            ScheduleRgbReapply(6000); // the EC can reset lighting after boot/logon too
 
             this.Shown += (s, e) =>
             {
@@ -530,6 +548,8 @@ namespace PredatorControlApp
             catch { }
         }
 
+        private readonly System.Windows.Forms.Timer _rgbReapplyTimer = new();
+        private int _rgbReapplyAttemptsLeft;
         private readonly System.Windows.Forms.Timer _turboFlourishTimer = new() { Interval = 1200 };
         private EventHandler? _turboFlourishHandler;
 
@@ -1983,8 +2003,38 @@ namespace PredatorControlApp
             if (e.Mode != PowerModes.Resume) return;
             if (_isClosing || IsDisposed || !IsHandleCreated) return;
 
-            try { BeginInvoke(new Action(async () => await ResyncAfterResume())); }
+            try
+            {
+                BeginInvoke(new Action(() => ScheduleRgbReapply(4000)));
+                BeginInvoke(new Action(async () => await ResyncAfterResume()));
+            }
             catch { }
+        }
+
+        private void OnSessionSwitch(object sender, SessionSwitchEventArgs e)
+        {
+            if (e.Reason != SessionSwitchReason.SessionUnlock &&
+                e.Reason != SessionSwitchReason.SessionLogon &&
+                e.Reason != SessionSwitchReason.ConsoleConnect) return;
+            if (_isClosing || IsDisposed || !IsHandleCreated) return;
+
+            try { BeginInvoke(new Action(() => ScheduleRgbReapply(3000))); }
+            catch { }
+        }
+
+        /// <summary>
+        /// Re-applies the current keyboard lighting after suspend/resume,
+        /// unlock or startup. Two attempts (the second 8s after the first)
+        /// because the keyboard controller isn't always ready right at wake;
+        /// re-sending the same colors is harmless. Lighting only - unlike
+        /// the full resume restore, this never touches power or fan modes.
+        /// </summary>
+        private void ScheduleRgbReapply(int firstDelayMs)
+        {
+            _rgbReapplyAttemptsLeft = 2;
+            _rgbReapplyTimer.Stop();
+            _rgbReapplyTimer.Interval = firstDelayMs;
+            _rgbReapplyTimer.Start();
         }
 
         private async Task ResyncAfterResume()

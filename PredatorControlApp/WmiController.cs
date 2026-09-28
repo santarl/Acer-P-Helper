@@ -75,6 +75,21 @@ namespace PredatorControlApp
             ApplyLightingMode(0);
         }
 
+        /// <summary>
+        /// Re-sends whatever RGB state is currently cached (static per-zone
+        /// colors, or the active effect). The keyboard controller forgets its
+        /// lighting across suspend/reboot, and the cached WMI object can be
+        /// stale afterwards - a failed call just invalidates it and gives up -
+        /// so drop it first and let it be looked up fresh. Only touches
+        /// lighting: no power/fan changes.
+        /// </summary>
+        public void ReapplyCurrentRgb()
+        {
+            InvalidateCache();
+            if (_lastMode == 0) SwitchToStaticMode();
+            else ApplyLightingMode(_lastMode);
+        }
+
         // Turbo/normal RGB "looks" - each a full 4-zone color set, matching
         // the same richness as the live per-zone editor (not a single
         // forced color across all zones). _turboProfileConfigured/
