@@ -444,7 +444,7 @@ namespace PredatorControlApp
         {
             try
             {
-                _sensorLabel.Text = $"CPU {_wmi.CpuTemp}\u00B0C \u00B7 GPU {_wmi.GpuTemp}\u00B0C";
+                _sensorLabel.Text = _owner.SensorSummary;
             }
             catch
             {

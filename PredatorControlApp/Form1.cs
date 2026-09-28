@@ -136,6 +136,14 @@ namespace PredatorControlApp
         internal bool IsTurboOn => _activePowerBtn == _btnTurbo;
         internal bool BatteryLimitEnabled => _switchBatteryLimit.Checked;
         internal int CurrentRgbMode => _rgbDropDown.SelectedIndex;
+        internal string SensorSummary
+        {
+            get
+            {
+                static string V(int v, string unit) => v > 0 ? $"{v}{unit}" : $"--{unit}";
+                return $"CPU {V(_cpuTemp, "°C")} · {V(_cpuRpm, " RPM")}\nGPU {V(_gpuTemp, "°C")} · {V(_gpuRpm, " RPM")}";
+            }
+        }
         private System.Windows.Forms.Timer _timer = new();
         private NotifyIcon _trayIcon = new();
         internal NotifyIcon TrayIconRef => _trayIcon;
@@ -527,18 +535,48 @@ namespace PredatorControlApp
         /// </summary>
         private void UpdateTrayIconBadge(bool turboOn)
         {
+            _badgeTurboOn = turboOn;
+            RedrawTrayIcon();
+        }
+
+        /// <summary>
+        /// Amber dot in the top-right corner while the dGPU is awake (it
+        /// reports no temperature when asleep, same signal as the "--" in
+        /// the dashboard). Only redraws when the state actually changes.
+        /// </summary>
+        private void UpdateGpuBadge(bool gpuActive)
+        {
+            if (gpuActive == _badgeGpuActive) return;
+            _badgeGpuActive = gpuActive;
+            RedrawTrayIcon();
+        }
+
+        private void RedrawTrayIcon()
+        {
             if (_baseTrayIcon == null) return;
             try
             {
                 using var bmp = _baseTrayIcon.ToBitmap();
                 using var g = Graphics.FromImage(bmp);
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                int d = (int)(bmp.Width * 0.42);
-                var rect = new Rectangle(bmp.Width - d, bmp.Height - d, d, d);
-                using var brush = new SolidBrush(turboOn ? Color.FromArgb(60, 220, 100) : Color.FromArgb(140, 140, 140));
                 using var pen = new Pen(Color.FromArgb(30, 30, 34), 1.5f);
-                g.FillEllipse(brush, rect);
-                g.DrawEllipse(pen, rect);
+
+                int d = (int)(bmp.Width * 0.42);
+                var turboRect = new Rectangle(bmp.Width - d, bmp.Height - d, d, d);
+                using (var brush = new SolidBrush(_badgeTurboOn ? Color.FromArgb(60, 220, 100) : Color.FromArgb(140, 140, 140)))
+                {
+                    g.FillEllipse(brush, turboRect);
+                    g.DrawEllipse(pen, turboRect);
+                }
+
+                if (_badgeGpuActive)
+                {
+                    int d2 = (int)(bmp.Width * 0.38);
+                    var gpuRect = new Rectangle(bmp.Width - d2, 0, d2, d2);
+                    using var brush = new SolidBrush(Color.FromArgb(255, 170, 0));
+                    g.FillEllipse(brush, gpuRect);
+                    g.DrawEllipse(pen, gpuRect);
+                }
 
                 var oldIcon = _trayIcon.Icon;
                 var handle = bmp.GetHicon();
@@ -548,6 +586,8 @@ namespace PredatorControlApp
             catch { }
         }
 
+        private int _cpuRpm, _gpuRpm;
+        private bool _badgeTurboOn, _badgeGpuActive;
         private readonly System.Windows.Forms.Timer _rgbReapplyTimer = new();
         private int _rgbReapplyAttemptsLeft;
         private readonly System.Windows.Forms.Timer _turboFlourishTimer = new() { Interval = 1200 };
@@ -2131,7 +2171,11 @@ namespace PredatorControlApp
             _lblCpuRpm.Text = cpuRpm > 0 ? $"{cpuRpm} RPM" : "-- RPM";
             _lblGpuRpm.Text = gpuRpm > 0 ? $"{gpuRpm} RPM" : "-- RPM";
 
-            _trayIcon.Text = $"Predator Control\nCPU: {(_cpuTemp > 0 ? $"{_cpuTemp}°C" : "N/A")}  GPU: {(_gpuTemp > 0 ? $"{_gpuTemp}°C" : "N/A")}";
+            _cpuRpm = cpuRpm;
+            _gpuRpm = gpuRpm;
+            UpdateGpuBadge(_gpuTemp > 0);
+
+            _trayIcon.Text = $"Predator Control\nCPU: {(_cpuTemp > 0 ? $"{_cpuTemp}°C" : "N/A")}  {(cpuRpm > 0 ? $"{cpuRpm} RPM" : "-- RPM")}\nGPU: {(_gpuTemp > 0 ? $"{_gpuTemp}°C" : "N/A")}  {(gpuRpm > 0 ? $"{gpuRpm} RPM" : "-- RPM")}";
 
             if (_fanCurveForm != null && !_fanCurveForm.IsDisposed)
                 _fanCurveForm.UpdateTemps(_cpuTemp, _gpuTemp);
