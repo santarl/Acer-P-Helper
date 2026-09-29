@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.Principal;
@@ -136,12 +137,70 @@ namespace PredatorControlApp
         internal bool IsTurboOn => _activePowerBtn == _btnTurbo;
         internal bool BatteryLimitEnabled => _switchBatteryLimit.Checked;
         internal int CurrentRgbMode => _rgbDropDown.SelectedIndex;
+        /// <summary>
+        /// Which process(es) are currently using any GPU engine, via the
+        /// same "GPU Engine" performance counters Task Manager's per-process
+        /// GPU column uses. Counters are kept alive across ticks (recreating
+        /// one resets its internal delta tracking, so this only adds/removes
+        /// entries as instances actually come and go) - no artificial sleep
+        /// needed since our own 2s telemetry tick already provides the
+        /// sampling interval. Sums all engine types per PID; on a hybrid
+        /// laptop that includes integrated-GPU-only work too, not just the
+        /// discrete GPU specifically - a limitation worth knowing about.
+        /// </summary>
+        private void UpdateGpuProcessUsage()
+        {
+            try
+            {
+                if (!PerformanceCounterCategory.Exists("GPU Engine")) { _gpuProcessNames = ""; return; }
+                var instances = new PerformanceCounterCategory("GPU Engine").GetInstanceNames();
+                var seen = new HashSet<string>(instances);
+                var byPid = new Dictionary<int, float>();
+
+                foreach (var inst in instances)
+                {
+                    if (!_gpuEngineCounters.TryGetValue(inst, out var pc))
+                    {
+                        try { pc = new PerformanceCounter("GPU Engine", "Utilization Percentage", inst, true); }
+                        catch { continue; }
+                        _gpuEngineCounters[inst] = pc;
+                    }
+
+                    float val;
+                    try { val = pc.NextValue(); } catch { continue; }
+
+                    var m = Regex.Match(inst, @"pid_(\d+)_");
+                    if (!m.Success || val <= 0) continue;
+                    int pid = int.Parse(m.Groups[1].Value);
+                    byPid[pid] = byPid.TryGetValue(pid, out var cur) ? cur + val : val;
+                }
+
+                foreach (var stale in _gpuEngineCounters.Keys.Where(k => !seen.Contains(k)).ToList())
+                {
+                    _gpuEngineCounters[stale].Dispose();
+                    _gpuEngineCounters.Remove(stale);
+                }
+
+                var names = byPid.Where(kv => kv.Value > 2f)
+                    .OrderByDescending(kv => kv.Value)
+                    .Take(2)
+                    .Select(kv => { try { return Process.GetProcessById(kv.Key).ProcessName; } catch { return null; } })
+                    .Where(n => !string.IsNullOrEmpty(n))
+                    .Distinct();
+
+                _gpuProcessNames = string.Join(", ", names);
+            }
+            catch { _gpuProcessNames = ""; }
+        }
+
         internal string SensorSummary
         {
             get
             {
                 static string V(int v, string unit) => v > 0 ? $"{v}{unit}" : $"--{unit}";
-                return $"CPU {V(_cpuTemp, "°C")} · {V(_cpuRpm, " RPM")}\nGPU {V(_gpuTemp, "°C")} · {V(_gpuRpm, " RPM")}";
+                string gpuLine = $"GPU {V(_gpuTemp, "°C")} · {V(_gpuRpm, " RPM")}";
+                if (!string.IsNullOrEmpty(_gpuProcessNames)) gpuLine += $" ({_gpuProcessNames})";
+                return $"CPU {V(_cpuTemp, "°C")} · {V(_cpuRpm, " RPM")}\n{gpuLine}";
             }
         }
         private System.Windows.Forms.Timer _timer = new();
@@ -587,6 +646,8 @@ namespace PredatorControlApp
         }
 
         private int _cpuRpm, _gpuRpm;
+        private readonly Dictionary<string, PerformanceCounter> _gpuEngineCounters = new();
+        private string _gpuProcessNames = "";
         private bool _badgeTurboOn, _badgeGpuActive;
         private readonly System.Windows.Forms.Timer _rgbReapplyTimer = new();
         private int _rgbReapplyAttemptsLeft;
@@ -2174,8 +2235,13 @@ namespace PredatorControlApp
             _cpuRpm = cpuRpm;
             _gpuRpm = gpuRpm;
             UpdateGpuBadge(_gpuTemp > 0);
+            UpdateGpuProcessUsage();
 
-            _trayIcon.Text = $"Predator Control\nCPU: {(_cpuTemp > 0 ? $"{_cpuTemp}°C" : "N/A")}  {(cpuRpm > 0 ? $"{cpuRpm} RPM" : "-- RPM")}\nGPU: {(_gpuTemp > 0 ? $"{_gpuTemp}°C" : "N/A")}  {(gpuRpm > 0 ? $"{gpuRpm} RPM" : "-- RPM")}";
+            string gpuTip = $"GPU: {(_gpuTemp > 0 ? $"{_gpuTemp}°C" : "N/A")}  {(gpuRpm > 0 ? $"{gpuRpm} RPM" : "-- RPM")}";
+            if (!string.IsNullOrEmpty(_gpuProcessNames)) gpuTip += $" ({_gpuProcessNames})";
+            // NotifyIcon.Text has a hard 127-char limit and throws past it.
+            string tip = $"Predator Control\nCPU: {(_cpuTemp > 0 ? $"{_cpuTemp}°C" : "N/A")}  {(cpuRpm > 0 ? $"{cpuRpm} RPM" : "-- RPM")}\n{gpuTip}";
+            _trayIcon.Text = tip.Length > 127 ? tip.Substring(0, 127) : tip;
 
             if (_fanCurveForm != null && !_fanCurveForm.IsDisposed)
                 _fanCurveForm.UpdateTemps(_cpuTemp, _gpuTemp);
