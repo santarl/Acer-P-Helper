@@ -17,8 +17,16 @@ namespace PredatorControlApp
         public DarkScrollPanel()
         {
             AutoScroll = true;
+            HorizontalScroll.Enabled = false;
+            HorizontalScroll.Visible = false;
             SetStyle(ControlStyles.OptimizedDoubleBuffer, true);
         }
+
+        private const int WM_NCCALCSIZE = 0x0083, WM_NCPAINT = 0x0085, WM_SIZE = 0x0005;
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool ShowScrollBar(IntPtr hWnd, int wBar, bool bShow);
+        private const int SB_HORZ = 0;
 
         // AutoScroll gives the panel a native (white) scrollbar in its
         // non-client area; we draw our own thumb instead, so claim the whole
@@ -27,16 +35,17 @@ namespace PredatorControlApp
         {
             switch (m.Msg)
             {
-                case HitCodes.WM_NCCALCSIZE:
+                case WM_NCCALCSIZE:
                     m.Result = IntPtr.Zero;
                     return;
-                case HitCodes.WM_NCPAINT:
+                case WM_NCPAINT:
                     return;
-                case HitCodes.WM_NCHITTEST:
-                    if (HitCodes.PassEdgeToForm(this, ref m)) return;
-                    break;
             }
             base.WndProc(ref m);
+            // With the vertical bar no longer reserving width, AutoScroll can
+            // decide content is a hair too wide and ask for a horizontal bar.
+            // This panel never scrolls sideways, so keep that one hidden.
+            if (m.Msg == WM_SIZE && IsHandleCreated) ShowScrollBar(Handle, SB_HORZ, false);
         }
 
         public void SetDpiScale(float dpi) => _dpi = dpi <= 0 ? 1f : dpi;

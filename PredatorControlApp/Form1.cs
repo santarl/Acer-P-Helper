@@ -36,7 +36,7 @@ namespace PredatorControlApp
 
         #endregion
 
-        #region Win32 Interop — Window Dragging
+        #region Win32 Interop — Window Chrome
 
         public const int WM_NCLBUTTONDOWN = 0xA1;
         public const int HT_CAPTION = 0x2;
@@ -47,52 +47,27 @@ namespace PredatorControlApp
         [DllImport("user32.dll")]
         public static extern bool ReleaseCapture();
 
-        private void TitleBar_MouseDown(object? sender, MouseEventArgs e)
+        // Native title bar: the system draws the caption, buttons, resize
+        // border, drag, Aero Snap and maximize. We only tell DWM to use the
+        // dark caption so it matches the dashboard (Win10 20H1+/Win11).
+        private const int DWMWA_CAPTION_COLOR = 35, DWMWA_TEXT_COLOR = 36;
+
+        protected override void OnHandleCreated(EventArgs e)
         {
-            if (e.Button != MouseButtons.Left) return;
-            if (e.Clicks == 2) { ToggleMaximize(); return; }   // the move loop below swallows the mouse-up, so MouseDoubleClick never fires
-            if (WindowState == FormWindowState.Maximized && e.Clicks != 1) return;
-            ReleaseCapture();
-            SendMessage(Handle, WM_NCLBUTTONDOWN, HT_CAPTION, 0);
-        }
-
-        private void ToggleMaximize() =>
-            WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized;
-
-        // ---- Borderless window that still behaves like a real one ----
-        // WinForms creates FormBorderStyle.None windows as bare popups, which
-        // Windows refuses to Aero-Snap / drag-to-maximize. Adding the sizing
-        // frame + maximize/minimize styles back (while reporting zero
-        // non-client area so no frame is ever drawn) restores snapping.
-        private const int WS_THICKFRAME = 0x00040000, WS_MAXIMIZEBOX = 0x00010000,
-                          WS_MINIMIZEBOX = 0x00020000, WS_SYSMENU = 0x00080000;
-        private const int WM_GETMINMAXINFO = 0x0024;
-
-        protected override CreateParams CreateParams
-        {
-            get
+            base.OnHandleCreated(e);
+            try
             {
-                var cp = base.CreateParams;
-                cp.Style |= WS_THICKFRAME | WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_SYSMENU;
-                return cp;
+                int dark = 1;
+                DwmSetWindowAttribute(Handle, DWMWA_USE_IMMERSIVE_DARK_MODE, ref dark, sizeof(int));
+                if (Environment.OSVersion.Version.Build >= 22000)   // caption colors are Win11-only
+                {
+                    int cap = FormBg.R | (FormBg.G << 8) | (FormBg.B << 16);   // COLORREF 0x00BBGGRR
+                    int txt = 0xFFFFFF;
+                    DwmSetWindowAttribute(Handle, DWMWA_CAPTION_COLOR, ref cap, sizeof(int));
+                    DwmSetWindowAttribute(Handle, DWMWA_TEXT_COLOR, ref txt, sizeof(int));
+                }
             }
-        }
-
-        public int EdgeHit(Point screenPoint)
-        {
-            if (WindowState != FormWindowState.Normal) return 0;
-            var p = PointToClient(screenPoint);
-            int g = S(6), w = ClientSize.Width, h = ClientSize.Height;
-            bool l = p.X < g, r = p.X >= w - g, t = p.Y < g, b = p.Y >= h - g;
-            if (t && l) return HitCodes.HTTOPLEFT;
-            if (t && r) return HitCodes.HTTOPRIGHT;
-            if (b && l) return HitCodes.HTBOTTOMLEFT;
-            if (b && r) return HitCodes.HTBOTTOMRIGHT;
-            if (l) return HitCodes.HTLEFT;
-            if (r) return HitCodes.HTRIGHT;
-            if (t) return HitCodes.HTTOP;
-            if (b) return HitCodes.HTBOTTOM;
-            return 0;
+            catch { /* cosmetic only */ }
         }
 
         #endregion
@@ -227,7 +202,6 @@ namespace PredatorControlApp
         private DarkScrollPanel _contentPanel = null!;
         private DarkScrollPanel _contentPanelRight = null!;
         private Panel _activeColumnPanel = null!;
-        private Panel _pnlTitle = null!;
         private int _twoColW, _colGap;
         private bool _singleColumn;
         private List<Control> _rightMoved = new();
@@ -259,7 +233,7 @@ namespace PredatorControlApp
         private static readonly Font FontBody = new("Segoe UI", 9.5f, FontStyle.Regular);
         private static readonly Font FontBodyBold = new("Segoe UI", 9.5f, FontStyle.Bold);
 
-        private Label _lblTitle = null!, _lblCpuTemp = null!, _lblGpuTemp = null!;
+        private Label _lblCpuTemp = null!, _lblGpuTemp = null!;
         private Label _lblCpuRpm = null!, _lblGpuRpm = null!;
         private Label _lblPowerStatus = null!, _lblFanStatus = null!;
         private Label _lblBrightHdr = null!, _lblSpeedHdr = null!;
@@ -496,27 +470,6 @@ namespace PredatorControlApp
         protected override void WndProc(ref Message m)
         {
             if (m.Msg == WM_SHOWME) ShowApp();
-
-            switch (m.Msg)
-            {
-                case HitCodes.WM_NCCALCSIZE when m.WParam != IntPtr.Zero:
-                    m.Result = IntPtr.Zero;      // client area = whole window; no native frame
-                    return;
-                case HitCodes.WM_NCHITTEST:
-                    base.WndProc(ref m);
-                    if ((int)m.Result == HitCodes.HTCLIENT)
-                    {
-                        int hit = EdgeHit(HitCodes.ScreenPointFromLParam(m.LParam));
-                        if (hit != 0) m.Result = (IntPtr)hit;
-                    }
-                    return;
-                case WM_GETMINMAXINFO:
-                    // Maximize to the monitor's work area (not over the taskbar).
-                    var scr = Screen.FromHandle(Handle);
-                    var wa = scr.WorkingArea;
-                    MaximizedBounds = new Rectangle(wa.X - scr.Bounds.X, wa.Y - scr.Bounds.Y, wa.Width, wa.Height);
-                    break;
-            }
             base.WndProc(ref m);
         }
 
@@ -841,7 +794,9 @@ namespace PredatorControlApp
             _twoColW = windowW; _colGap = columnGap;
             int workH = Screen.PrimaryScreen?.WorkingArea.Height ?? S(1000);
             this.ClientSize = new Size(windowW, Math.Max(S(400), Math.Min(S(700), workH - 40)));
-            this.FormBorderStyle = FormBorderStyle.None;
+            this.FormBorderStyle = FormBorderStyle.Sizable;
+            this.MaximizeBox = true;
+            this.Text = "Predator Control";
             this.StartPosition = FormStartPosition.CenterScreen;
             try { this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
 
@@ -851,33 +806,7 @@ namespace PredatorControlApp
             int btnH = S(34);
             int y = 0;
 
-            var pnlTitle = new ChromePanel { Height = S(40), Width = windowW, BackColor = Color.FromArgb(18, 18, 21) };
-            _pnlTitle = pnlTitle;
-            pnlTitle.MouseDown += TitleBar_MouseDown;
-            this.Controls.Add(pnlTitle);
-            var picIcon = new PictureBox { SizeMode = PictureBoxSizeMode.Zoom, Size = new Size(S(16), S(16)), Location = new Point(pad - S(4), S(12)), BackColor = Color.Transparent };
-            try { var extIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); if (extIcon != null) picIcon.Image = extIcon.ToBitmap(); } catch { }
-            picIcon.MouseDown += TitleBar_MouseDown;
-            pnlTitle.Controls.Add(picIcon);
-
-            _lblTitle = new Label { Text = "Predator Control", ForeColor = Color.White, Font = FontTitle, AutoSize = true, Location = new Point(pad + S(20), S(11)), BackColor = Color.Transparent };
-            _lblTitle.MouseDown += TitleBar_MouseDown;
-            pnlTitle.Controls.Add(_lblTitle);
-
-            var lblClose = new Label { Text = "●", ForeColor = Color.FromArgb(255, 95, 86), Font = new Font("Arial", 12f), AutoSize = true, Location = new Point(windowW - pad - S(4), S(9)), Cursor = Cursors.Hand, BackColor = Color.Transparent };
-            var lblMin = new Label { Text = "●", ForeColor = Color.FromArgb(255, 189, 46), Font = new Font("Arial", 12f), AutoSize = true, Location = new Point(lblClose.Left - S(20), S(9)), Cursor = Cursors.Hand, BackColor = Color.Transparent };
-            var lblMaximize = new Label { Text = "●", ForeColor = Color.FromArgb(39, 201, 63), Font = new Font("Arial", 12f), AutoSize = true, Location = new Point(lblMin.Left - S(20), S(9)), Cursor = Cursors.Hand, BackColor = Color.Transparent };
-
-            lblClose.Click += (s, e) => { this.Close(); };
-            lblMin.Click += (s, e) => { this.WindowState = FormWindowState.Minimized; };
-            lblMaximize.Click += (s, e) => ToggleMaximize();
-
-            pnlTitle.Controls.Add(lblClose);
-            pnlTitle.Controls.Add(lblMin);
-            pnlTitle.Controls.Add(lblMaximize);
-            lblClose.Anchor = lblMin.Anchor = lblMaximize.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-
-            y = pnlTitle.Bottom;
+            y = 0;
 
             _contentPanel = new DarkScrollPanel
             {
@@ -1387,7 +1316,7 @@ namespace PredatorControlApp
 
             // Fit the window to the taller column (capped to the screen's
             // working height; scrolling remains as the fallback).
-            int neededClientH = pnlTitle.Height + Math.Max(leftColumnFinalY + S(50), rightColumnFinalY);
+            int neededClientH = Math.Max(leftColumnFinalY + S(50), rightColumnFinalY);
             int cappedClientH = Math.Min(neededClientH, workH - 40);
             this.MinimumSize = new Size(_formW + S(40), S(400));
             this.ClientSize = new Size(windowW, Math.Max(S(400), cappedClientH));
@@ -1409,11 +1338,10 @@ namespace PredatorControlApp
         /// </summary>
         private void LayoutColumns()
         {
-            if (_pnlTitle == null || _contentPanel == null || _contentPanelRight == null || _twoColW == 0) return;
+            if (_contentPanel == null || _contentPanelRight == null || _twoColW == 0) return;
             if (WindowState == FormWindowState.Minimized) return;
 
-            int cw = ClientSize.Width, top = _pnlTitle.Bottom, h = Math.Max(0, ClientSize.Height - top);
-            _pnlTitle.Width = cw;
+            int cw = ClientSize.Width, top = 0, h = Math.Max(0, ClientSize.Height);
 
             bool single = cw < _twoColW;
             ReflowColumns(single);
@@ -1504,7 +1432,7 @@ namespace PredatorControlApp
             if (WindowState != FormWindowState.Normal || _singleColumn) return;
             if (ClientSize != _lastAutoClientSize) return;
             int leftH = _leftBottomY + S(50) + (_fanExpanded ? _fanExpandDelta : 0);
-            int needed = _pnlTitle.Height + Math.Max(leftH, _rightBottomY);
+            int needed = Math.Max(leftH, _rightBottomY);
             var wa = Screen.FromControl(this).WorkingArea;
             int target = Math.Max(S(400), Math.Min(needed, wa.Height - 40));
             if (target == ClientSize.Height) return;
