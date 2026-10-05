@@ -49,36 +49,50 @@ namespace PredatorControlApp
 
         private void TitleBar_MouseDown(object? sender, MouseEventArgs e)
         {
-            if (e.Button == MouseButtons.Left)
+            if (e.Button != MouseButtons.Left) return;
+            if (e.Clicks == 2) { ToggleMaximize(); return; }   // the move loop below swallows the mouse-up, so MouseDoubleClick never fires
+            if (WindowState == FormWindowState.Maximized && e.Clicks != 1) return;
+            ReleaseCapture();
+            SendMessage(Handle, WM_NCLBUTTONDOWN, HT_CAPTION, 0);
+        }
+
+        private void ToggleMaximize() =>
+            WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized;
+
+        // ---- Borderless window that still behaves like a real one ----
+        // WinForms creates FormBorderStyle.None windows as bare popups, which
+        // Windows refuses to Aero-Snap / drag-to-maximize. Adding the sizing
+        // frame + maximize/minimize styles back (while reporting zero
+        // non-client area so no frame is ever drawn) restores snapping.
+        private const int WS_THICKFRAME = 0x00040000, WS_MAXIMIZEBOX = 0x00010000,
+                          WS_MINIMIZEBOX = 0x00020000, WS_SYSMENU = 0x00080000;
+        private const int WM_GETMINMAXINFO = 0x0024;
+
+        protected override CreateParams CreateParams
+        {
+            get
             {
-                ReleaseCapture();
-                SendMessage(Handle, WM_NCLBUTTONDOWN, HT_CAPTION, 0);
+                var cp = base.CreateParams;
+                cp.Style |= WS_THICKFRAME | WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_SYSMENU;
+                return cp;
             }
         }
 
-        /// <summary>
-        /// This window is borderless (FormBorderStyle.None) with fully
-        /// custom chrome, so there's no native maximize box to wire up -
-        /// this toggles between the normal compact bounds and a taller
-        /// version using the full screen working height, keeping width
-        /// fixed (the two-column layout has a natural fixed width; growing
-        /// width wouldn't reveal anything new the way growing height does
-        /// for anyone whose screen is too short for the default size).
-        /// </summary>
-        private void ToggleCustomMaximize()
+        public int EdgeHit(Point screenPoint)
         {
-            if (_isCustomMaximized)
-            {
-                this.Bounds = _normalBounds;
-                _isCustomMaximized = false;
-            }
-            else
-            {
-                _normalBounds = this.Bounds;
-                var wa = Screen.FromControl(this).WorkingArea;
-                this.Bounds = new Rectangle(this.Left, wa.Top + 10, this.Width, wa.Height - 20);
-                _isCustomMaximized = true;
-            }
+            if (WindowState != FormWindowState.Normal) return 0;
+            var p = PointToClient(screenPoint);
+            int g = S(6), w = ClientSize.Width, h = ClientSize.Height;
+            bool l = p.X < g, r = p.X >= w - g, t = p.Y < g, b = p.Y >= h - g;
+            if (t && l) return HitCodes.HTTOPLEFT;
+            if (t && r) return HitCodes.HTTOPRIGHT;
+            if (b && l) return HitCodes.HTBOTTOMLEFT;
+            if (b && r) return HitCodes.HTBOTTOMRIGHT;
+            if (l) return HitCodes.HTLEFT;
+            if (r) return HitCodes.HTRIGHT;
+            if (t) return HitCodes.HTTOP;
+            if (b) return HitCodes.HTBOTTOM;
+            return 0;
         }
 
         #endregion
@@ -213,8 +227,16 @@ namespace PredatorControlApp
         private DarkScrollPanel _contentPanel = null!;
         private DarkScrollPanel _contentPanelRight = null!;
         private Panel _activeColumnPanel = null!;
-        private bool _isCustomMaximized = false;
-        private Rectangle _normalBounds;
+        private Panel _pnlTitle = null!;
+        private int _twoColW, _colGap;
+        private bool _singleColumn;
+        private List<Control> _rightMoved = new();
+        private int _stackOffset;
+        private List<Control> _belowFanControls = new();
+        private bool _fanExpanded;
+        private int _fanExpandDelta;
+        private int _leftBottomY, _rightBottomY;
+        private Size _lastAutoClientSize;
 
         private bool? _isPluggedIn;
         private bool? _pendingPluggedIn;
@@ -474,6 +496,27 @@ namespace PredatorControlApp
         protected override void WndProc(ref Message m)
         {
             if (m.Msg == WM_SHOWME) ShowApp();
+
+            switch (m.Msg)
+            {
+                case HitCodes.WM_NCCALCSIZE when m.WParam != IntPtr.Zero:
+                    m.Result = IntPtr.Zero;      // client area = whole window; no native frame
+                    return;
+                case HitCodes.WM_NCHITTEST:
+                    base.WndProc(ref m);
+                    if ((int)m.Result == HitCodes.HTCLIENT)
+                    {
+                        int hit = EdgeHit(HitCodes.ScreenPointFromLParam(m.LParam));
+                        if (hit != 0) m.Result = (IntPtr)hit;
+                    }
+                    return;
+                case WM_GETMINMAXINFO:
+                    // Maximize to the monitor's work area (not over the taskbar).
+                    var scr = Screen.FromHandle(Handle);
+                    var wa = scr.WorkingArea;
+                    MaximizedBounds = new Rectangle(wa.X - scr.Bounds.X, wa.Y - scr.Bounds.Y, wa.Width, wa.Height);
+                    break;
+            }
             base.WndProc(ref m);
         }
 
@@ -786,6 +829,8 @@ namespace PredatorControlApp
         private void BuildUI()
         {
             this.Controls.Clear();
+            _singleColumn = false; _rightMoved = new(); _stackOffset = 0;
+            _belowFanControls = new(); _fanExpanded = false; _fanExpandDelta = 0;
             this.BackColor = FormBg;
             this.ForeColor = Color.White;
 
@@ -793,6 +838,7 @@ namespace PredatorControlApp
                                        // absolute positioning math within each column stays valid
             int columnGap = S(16);
             int windowW = _formW * 2 + columnGap;
+            _twoColW = windowW; _colGap = columnGap;
             int workH = Screen.PrimaryScreen?.WorkingArea.Height ?? S(1000);
             this.ClientSize = new Size(windowW, Math.Max(S(400), Math.Min(S(700), workH - 40)));
             this.FormBorderStyle = FormBorderStyle.None;
@@ -805,7 +851,8 @@ namespace PredatorControlApp
             int btnH = S(34);
             int y = 0;
 
-            var pnlTitle = new Panel { Height = S(40), Width = windowW, BackColor = Color.FromArgb(18, 18, 21) };
+            var pnlTitle = new ChromePanel { Height = S(40), Width = windowW, BackColor = Color.FromArgb(18, 18, 21) };
+            _pnlTitle = pnlTitle;
             pnlTitle.MouseDown += TitleBar_MouseDown;
             this.Controls.Add(pnlTitle);
             var picIcon = new PictureBox { SizeMode = PictureBoxSizeMode.Zoom, Size = new Size(S(16), S(16)), Location = new Point(pad - S(4), S(12)), BackColor = Color.Transparent };
@@ -823,33 +870,32 @@ namespace PredatorControlApp
 
             lblClose.Click += (s, e) => { this.Close(); };
             lblMin.Click += (s, e) => { this.WindowState = FormWindowState.Minimized; };
-            lblMaximize.Click += (s, e) => ToggleCustomMaximize();
+            lblMaximize.Click += (s, e) => ToggleMaximize();
 
             pnlTitle.Controls.Add(lblClose);
             pnlTitle.Controls.Add(lblMin);
             pnlTitle.Controls.Add(lblMaximize);
+            lblClose.Anchor = lblMin.Anchor = lblMaximize.Anchor = AnchorStyles.Top | AnchorStyles.Right;
 
             y = pnlTitle.Bottom;
 
             _contentPanel = new DarkScrollPanel
             {
                 Location = new Point(0, y),
-                Size = new Size(_formW + DarkScrollPanel.NativeBarWidth, this.ClientSize.Height - y),
+                Size = new Size(_formW, this.ClientSize.Height - y),
                 BackColor = FormBg
             };
             _contentPanel.SetDpiScale(_dpiScale);
             this.Controls.Add(_contentPanel);
-            _contentPanel.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left;
 
             _contentPanelRight = new DarkScrollPanel
             {
                 Location = new Point(_formW + columnGap, y),
-                Size = new Size(_formW + DarkScrollPanel.NativeBarWidth, this.ClientSize.Height - y),
+                Size = new Size(_formW, this.ClientSize.Height - y),
                 BackColor = FormBg
             };
             _contentPanelRight.SetDpiScale(_dpiScale);
             this.Controls.Add(_contentPanelRight);
-            _contentPanelRight.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left;
 
             _activeColumnPanel = _contentPanel;
 
@@ -962,6 +1008,7 @@ namespace PredatorControlApp
             };
 
             y += S(30) + S(12);
+            int fanLabelsY = y;
             int fanSliderW = (contentW - gap) / 2;
             _lblCpuFanSpeedHdr = MakeLabel("CPU FAN: 50%", pad, y, FontSectionHeader, SubHeaderColor);
             _lblGpuFanSpeedHdr = MakeLabel("GPU FAN: 50%", pad + fanSliderW + gap, y, FontSectionHeader, SubHeaderColor);
@@ -1037,7 +1084,13 @@ namespace PredatorControlApp
                 OpenFanCurveEditor();
             };
 
-            y += btnH + S(20);
+            // The Custom-fan controls above are only visible in Custom mode, so
+            // the layout below is built as if they were collapsed (the section
+            // header sits right under the fan dropdowns) and everything beneath
+            // is shifted down by _fanExpandDelta when Custom is selected.
+            _fanExpandDelta = (y + btnH + S(20)) - (fanLabelsY + S(8));
+            int belowFanY = fanLabelsY + S(8);
+            y = belowFanY;
             MakeSectionHeader("DISPLAY REFRESH RATE", pad, y);
             
             y += S(24);
@@ -1325,17 +1378,139 @@ namespace PredatorControlApp
             _btnCheckUpdates.Click += async (s, e) => await CheckForUpdatesAsync();
 
             int rightColumnFinalY = y + updBtnH + S(50);
-            _contentPanel.AutoScrollMinSize = new Size(0, leftColumnFinalY + S(50));
-            _contentPanelRight.AutoScrollMinSize = new Size(0, rightColumnFinalY);
+            _leftBottomY = leftColumnFinalY;
+            _rightBottomY = rightColumnFinalY;
 
-            // Resize the window to fit the taller of the two columns, so
-            // neither needs to scroll in the common case - capped to the
-            // screen's working height for anyone on a short display, where
-            // scrolling remains as a fallback rather than clipping content.
-            int neededContentH = Math.Max(leftColumnFinalY + S(50), rightColumnFinalY);
-            int neededClientH = pnlTitle.Height + neededContentH;
+            var fanOnly = new HashSet<Control> { _lblCpuFanSpeedHdr, _lblGpuFanSpeedHdr, _cpuFanSlider, _gpuFanSlider, _btnFixedSpeed, _btnFanCurve };
+            _belowFanControls = _contentPanel.Controls.Cast<Control>()
+                .Where(c => c.Top >= belowFanY - 1 && !fanOnly.Contains(c)).ToList();
+
+            // Fit the window to the taller column (capped to the screen's
+            // working height; scrolling remains as the fallback).
+            int neededClientH = pnlTitle.Height + Math.Max(leftColumnFinalY + S(50), rightColumnFinalY);
             int cappedClientH = Math.Min(neededClientH, workH - 40);
+            this.MinimumSize = new Size(_formW + S(40), S(400));
             this.ClientSize = new Size(windowW, Math.Max(S(400), cappedClientH));
+            _lastAutoClientSize = this.ClientSize;
+            LayoutColumns();
+        }
+
+        protected override void OnSizeChanged(EventArgs e)
+        {
+            base.OnSizeChanged(e);
+            LayoutColumns();
+        }
+
+        /// <summary>
+        /// Positions the title bar and the column panels for the current window
+        /// size: two centered columns when wide enough, otherwise the right
+        /// column's controls are stacked under the left one in a single
+        /// scrolling column (so half-screen snaps stay usable).
+        /// </summary>
+        private void LayoutColumns()
+        {
+            if (_pnlTitle == null || _contentPanel == null || _contentPanelRight == null || _twoColW == 0) return;
+            if (WindowState == FormWindowState.Minimized) return;
+
+            int cw = ClientSize.Width, top = _pnlTitle.Bottom, h = Math.Max(0, ClientSize.Height - top);
+            _pnlTitle.Width = cw;
+
+            bool single = cw < _twoColW;
+            ReflowColumns(single);
+
+            if (single)
+            {
+                _contentPanel.SetBounds(Math.Max(0, (cw - _formW) / 2), top, _formW, h);
+            }
+            else
+            {
+                int x = (cw - _twoColW) / 2;
+                _contentPanel.SetBounds(x, top, _formW, h);
+                _contentPanelRight.SetBounds(x + _formW + _colGap, top, _formW, h);
+            }
+            UpdateScrollHeights();
+        }
+
+        private void ReflowColumns(bool single)
+        {
+            if (single == _singleColumn) return;
+            SuspendLayout();
+            _contentPanel.AutoScrollPosition = Point.Empty;
+            _contentPanelRight.AutoScrollPosition = Point.Empty;
+            if (single)
+            {
+                _stackOffset = _leftBottomY + (_fanExpanded ? _fanExpandDelta : 0);
+                _rightMoved = _contentPanelRight.Controls.Cast<Control>().ToList();
+                foreach (var c in _rightMoved)
+                {
+                    _contentPanelRight.Controls.Remove(c);
+                    c.Top += _stackOffset;
+                    _contentPanel.Controls.Add(c);
+                }
+                _contentPanelRight.Visible = false;
+            }
+            else
+            {
+                foreach (var c in _rightMoved)
+                {
+                    _contentPanel.Controls.Remove(c);
+                    c.Top -= _stackOffset;
+                    _contentPanelRight.Controls.Add(c);
+                }
+                _rightMoved = new();
+                _contentPanelRight.Visible = true;
+            }
+            _singleColumn = single;
+            ResumeLayout(true);
+        }
+
+        private void UpdateScrollHeights()
+        {
+            int leftH = _leftBottomY + S(50) + (_fanExpanded ? _fanExpandDelta : 0);
+            if (_singleColumn)
+            {
+                _contentPanel.AutoScrollMinSize = new Size(0, _stackOffset + _rightBottomY);
+            }
+            else
+            {
+                _contentPanel.AutoScrollMinSize = new Size(0, leftH);
+                _contentPanelRight.AutoScrollMinSize = new Size(0, _rightBottomY);
+            }
+        }
+
+        /// <summary>Shows/hides the space the Custom-fan controls need, moving everything below them.</summary>
+        private void SetFanBlockExpanded(bool expanded)
+        {
+            if (expanded == _fanExpanded || _contentPanel == null) return;
+            _fanExpanded = expanded;
+            int d = expanded ? _fanExpandDelta : -_fanExpandDelta;
+            SuspendLayout();
+            foreach (var c in _belowFanControls) c.Top += d;
+            if (_singleColumn)
+            {
+                foreach (var c in _rightMoved) c.Top += d;
+                _stackOffset += d;
+            }
+            ResumeLayout(true);
+            UpdateScrollHeights();
+            FitWindowHeight();
+        }
+
+        // Grows/shrinks the window with the content, but only while the
+        // window is still at the size we gave it (never fights a user resize,
+        // a snap, or maximize).
+        private void FitWindowHeight()
+        {
+            if (WindowState != FormWindowState.Normal || _singleColumn) return;
+            if (ClientSize != _lastAutoClientSize) return;
+            int leftH = _leftBottomY + S(50) + (_fanExpanded ? _fanExpandDelta : 0);
+            int needed = _pnlTitle.Height + Math.Max(leftH, _rightBottomY);
+            var wa = Screen.FromControl(this).WorkingArea;
+            int target = Math.Max(S(400), Math.Min(needed, wa.Height - 40));
+            if (target == ClientSize.Height) return;
+            ClientSize = new Size(ClientSize.Width, target);
+            if (Bottom > wa.Bottom) Top = Math.Max(wa.Top, wa.Bottom - Height);
+            _lastAutoClientSize = ClientSize;
         }
 
         private void UpdateRgbControls(int mode)
@@ -1430,6 +1605,7 @@ namespace PredatorControlApp
             _gpuFanSlider.Visible = isCustom;
             _btnFixedSpeed.Visible = isCustom;
             _btnFanCurve.Visible = isCustom;
+            SetFanBlockExpanded(isCustom);
 
             if (isCustom)
             {

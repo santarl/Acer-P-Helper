@@ -20,6 +20,25 @@ namespace PredatorControlApp
             SetStyle(ControlStyles.OptimizedDoubleBuffer, true);
         }
 
+        // AutoScroll gives the panel a native (white) scrollbar in its
+        // non-client area; we draw our own thumb instead, so claim the whole
+        // window rect as client area and never paint the native bar.
+        protected override void WndProc(ref Message m)
+        {
+            switch (m.Msg)
+            {
+                case HitCodes.WM_NCCALCSIZE:
+                    m.Result = IntPtr.Zero;
+                    return;
+                case HitCodes.WM_NCPAINT:
+                    return;
+                case HitCodes.WM_NCHITTEST:
+                    if (HitCodes.PassEdgeToForm(this, ref m)) return;
+                    break;
+            }
+            base.WndProc(ref m);
+        }
+
         public void SetDpiScale(float dpi) => _dpi = dpi <= 0 ? 1f : dpi;
         private int S(int v) => Math.Max(1, (int)(v * _dpi));
 
