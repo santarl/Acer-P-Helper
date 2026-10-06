@@ -443,7 +443,7 @@ namespace PredatorControlApp
         private async Task PromptUpdateAsync(UpdateInfo info)
         {
             bool accepted = Updater.ShowNotes(this, "Update available",
-                $"Version {info.Version.ToString(3)} is available — you have v{Updater.CurrentText}",
+                $"Version {Updater.Text(info.Version)} is available — you have v{Updater.CurrentText}",
                 info.Notes, confirm: true);
 
             if (!accepted) return;

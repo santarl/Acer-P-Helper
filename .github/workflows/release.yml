@@ -1,0 +1,76 @@
+name: Release
+
+# Pushing a version tag builds the app and publishes a GitHub release.
+#   git tag -a v2026.10.6 -m "What changed, one bullet per line"
+#   git push origin v2026.10.6
+# A second release on the same day is v2026.10.6.1, then v2026.10.6.2, ...
+# The tag must match <Version> in PredatorControlApp.csproj (without the "v").
+# The tag message becomes the release notes shown in the app's update dialog.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Check tag matches project version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          proj=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' PredatorControlApp/PredatorControlApp.csproj | head -n1)
+          echo "tag=$tag project=$proj"
+          if [ "$tag" != "$proj" ]; then
+            echo "::error::Tag v$tag does not match <Version>$proj</Version> in PredatorControlApp.csproj"
+            exit 1
+          fi
+
+      # Asset names matter: the in-app updater treats a name containing
+      # "standalone" as the self-contained build and any other .exe as the
+      # framework-dependent one, and downloads the one matching the running copy.
+      - name: Publish (needs .NET 10 Desktop Runtime)
+        run: |
+          dotnet publish PredatorControlApp/PredatorControlApp.csproj -c Release -r win-x64 \
+            --self-contained false -p:PublishSingleFile=true -o out/fd
+          mkdir -p dist
+          cp out/fd/PredatorControlApp.exe dist/PredatorControl.exe
+
+      - name: Publish (standalone)
+        run: |
+          dotnet publish PredatorControlApp/PredatorControlApp.csproj -c Release -r win-x64 \
+            --self-contained true -p:PublishSingleFile=true \
+            -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o out/sc
+          cp out/sc/PredatorControlApp.exe dist/PredatorControl-standalone.exe
+
+      - name: Release notes
+        run: |
+          # Annotated tag message if there is one, else the commit subjects since the previous tag.
+          notes=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME")
+          if [ -z "$(echo "$notes" | tr -d '[:space:]')" ]; then
+            prev=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
+            if [ -n "$prev" ]; then range="$prev..$GITHUB_REF_NAME"; else range="-n 30 $GITHUB_REF_NAME"; fi
+            notes=$(git log --no-merges --pretty='- %s' $range)
+          fi
+          printf '%s\n' "$notes" > notes.md
+          cat notes.md
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.exe \
+            --title "${GITHUB_REF_NAME#v}" --notes-file notes.md --verify-tag

@@ -65,9 +65,12 @@ namespace PredatorControlApp
         [Conditional("DEBUG")]
         private static void CheckUpdater()
         {
-            Debug.Assert(Updater.TryParseTag("v1.3.1", out var tag) && tag == new Version(1, 3, 1), "tag must parse without the v");
+            Debug.Assert(Updater.TryParseTag("v1.3.1", out var tag) && tag == new Version(1, 3, 1, 0), "tag must parse without the v");
             Debug.Assert(!Updater.TryParseTag("nightly", out _), "junk tags must be rejected");
-            Debug.Assert(Updater.Current.Revision == -1, "Current must be Major.Minor.Build so tags compare cleanly");
+            Debug.Assert(Updater.Current.Revision >= 0, "Current must always carry four parts so tags compare cleanly");
+            Debug.Assert(Updater.TryParseTag("v2026.10.6", out var d1) && Updater.TryParseTag("v2026.10.6.1", out var d2) && d2 > d1,
+                "a same-day .1 release must rank above the first release of that day");
+            Debug.Assert(Updater.TryParseTag("v2026.10.10", out var d3) && d3 > d1, "dates compare numerically, not as text");
 
             using var doc = System.Text.Json.JsonDocument.Parse("""
                 {"assets":[

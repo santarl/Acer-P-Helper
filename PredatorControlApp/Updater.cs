@@ -15,7 +15,7 @@ namespace PredatorControlApp
     [SupportedOSPlatform("windows")]
     internal static class Updater
     {
-        private const string ReleasesApi = "https://api.github.com/repos/supesonly/Acer-P-Helper/releases";
+        private const string ReleasesApi = "https://api.github.com/repos/santarl/Acer-P-Helper/releases";
         private const string RegPath = @"SOFTWARE\PredatorControl";
         private const StringComparison OIC = StringComparison.OrdinalIgnoreCase;
 
@@ -23,9 +23,14 @@ namespace PredatorControlApp
 
         internal static Version Current => Norm(Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0));
 
-        internal static string CurrentText => Current.ToString(3);
+        internal static string CurrentText => Text(Current);
 
-        private static Version Norm(Version v) => new(v.Major, v.Minor, Math.Max(v.Build, 0));
+        /// <summary>"2026.10.6", or "2026.10.6.1" for a second release the same day.</summary>
+        internal static string Text(Version v) => v.Revision > 0 ? v.ToString(4) : v.ToString(3);
+
+        // Always four parts (year.month.day.n) so "2026.10.6" and "2026.10.6.1" compare correctly;
+        // a plain Version(1,2,3) would sort below Version(1,2,3,0).
+        private static Version Norm(Version v) => new(v.Major, v.Minor, Math.Max(v.Build, 0), Math.Max(v.Revision, 0));
 
         internal static bool TryParseTag(string tag, out Version v)
         {
@@ -57,7 +62,7 @@ namespace PredatorControlApp
                 if (Flag(rel, "draft") || Flag(rel, "prerelease")) continue;
                 if (!TryParseTag(Str(rel, "tag_name"), out var v) || v <= current) continue;
 
-                notes.AppendLine($"--- {Str(rel, "name", $"v{v.ToString(3)}")} ---")
+                notes.AppendLine($"--- {Str(rel, "name", $"v{Text(v)}")} ---")
                      .AppendLine(Str(rel, "body").Trim().Replace("\r\n", "\n").Replace("\n", Environment.NewLine))
                      .AppendLine();
 
@@ -121,7 +126,7 @@ namespace PredatorControlApp
             {
                 using var key = Registry.CurrentUser.CreateSubKey(RegPath);
                 key.SetValue("UpdateNotes", info.Notes);
-                key.SetValue("UpdateNotesVersion", info.Version.ToString(3));
+                key.SetValue("UpdateNotesVersion", Text(info.Version));
             }
             catch { }
 
