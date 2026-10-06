@@ -127,53 +127,54 @@ namespace PredatorControlApp
         internal bool BatteryLimitEnabled => _switchBatteryLimit.Checked;
         internal int CurrentRgbMode => _rgbDropDown.SelectedIndex;
         /// <summary>
-        /// Which process(es) are currently using any GPU engine, via the
-        /// same "GPU Engine" performance counters Task Manager's per-process
-        /// GPU column uses. Counters are kept alive across ticks (recreating
-        /// one resets its internal delta tracking, so this only adds/removes
-        /// entries as instances actually come and go) - no artificial sleep
-        /// needed since our own 2s telemetry tick already provides the
-        /// sampling interval. Sums all engine types per PID; on a hybrid
-        /// laptop that includes integrated-GPU-only work too, not just the
-        /// discrete GPU specifically - a limitation worth knowing about.
+        /// Which process(es) are currently using any GPU engine, from the same
+        /// "GPU Engine" performance data Task Manager's per-process GPU column
+        /// uses. The whole category is read ONCE per tick and each instance's
+        /// utilization is computed from the previous tick's raw sample - the
+        /// earlier version created a PerformanceCounter per instance (often
+        /// hundreds) and every NextValue() re-read the entire category, which
+        /// is quadratic work and constant object/handle churn. Runs on a
+        /// background thread (see UpdateTelemetryCore), one call at a time.
         /// </summary>
+        private bool? _gpuCategoryExists;
+        private Dictionary<string, CounterSample> _gpuPrevSamples = new();
+
         private void UpdateGpuProcessUsage()
         {
             try
             {
-                if (!PerformanceCounterCategory.Exists("GPU Engine")) { _gpuProcessNames = ""; return; }
-                var instances = new PerformanceCounterCategory("GPU Engine").GetInstanceNames();
-                var seen = new HashSet<string>(instances);
+                _gpuCategoryExists ??= PerformanceCounterCategory.Exists("GPU Engine");
+                if (_gpuCategoryExists != true) { _gpuProcessNames = ""; return; }
+
+                var data = new PerformanceCounterCategory("GPU Engine").ReadCategory();
+                if (!data.Contains("Utilization Percentage")) { _gpuProcessNames = ""; return; }
+
+                var current = new Dictionary<string, CounterSample>();
                 var byPid = new Dictionary<int, float>();
 
-                foreach (var inst in instances)
+                foreach (InstanceData inst in data["Utilization Percentage"].Values)
                 {
-                    if (!_gpuEngineCounters.TryGetValue(inst, out var pc))
-                    {
-                        try { pc = new PerformanceCounter("GPU Engine", "Utilization Percentage", inst, true); }
-                        catch { continue; }
-                        _gpuEngineCounters[inst] = pc;
-                    }
+                    current[inst.InstanceName] = inst.Sample;
+                    if (!_gpuPrevSamples.TryGetValue(inst.InstanceName, out var prev)) continue;
 
                     float val;
-                    try { val = pc.NextValue(); } catch { continue; }
+                    try { val = CounterSample.Calculate(prev, inst.Sample); } catch { continue; }
 
-                    var m = Regex.Match(inst, @"pid_(\d+)_");
+                    var m = Regex.Match(inst.InstanceName, @"pid_(\d+)_");
                     if (!m.Success || val <= 0) continue;
                     int pid = int.Parse(m.Groups[1].Value);
                     byPid[pid] = byPid.TryGetValue(pid, out var cur) ? cur + val : val;
                 }
-
-                foreach (var stale in _gpuEngineCounters.Keys.Where(k => !seen.Contains(k)).ToList())
-                {
-                    _gpuEngineCounters[stale].Dispose();
-                    _gpuEngineCounters.Remove(stale);
-                }
+                _gpuPrevSamples = current;   // also drops instances that disappeared
 
                 var names = byPid.Where(kv => kv.Value > 2f)
                     .OrderByDescending(kv => kv.Value)
                     .Take(2)
-                    .Select(kv => { try { return Process.GetProcessById(kv.Key).ProcessName; } catch { return null; } })
+                    .Select(kv =>
+                    {
+                        try { using var proc = Process.GetProcessById(kv.Key); return proc.ProcessName; }
+                        catch { return null; }
+                    })
                     .Where(n => !string.IsNullOrEmpty(n))
                     .Distinct();
 
@@ -642,8 +643,8 @@ namespace PredatorControlApp
         }
 
         private int _cpuRpm, _gpuRpm;
-        private readonly Dictionary<string, PerformanceCounter> _gpuEngineCounters = new();
-        private string _gpuProcessNames = "";
+        private volatile bool _sampling;
+        private volatile string _gpuProcessNames = "";
         private bool _badgeTurboOn, _badgeGpuActive;
         private readonly System.Windows.Forms.Timer _rgbReapplyTimer = new();
         private int _rgbReapplyAttemptsLeft;
@@ -1394,15 +1395,22 @@ namespace PredatorControlApp
 
         private void UpdateScrollHeights()
         {
+            // Assigning AutoScrollMinSize re-lays-out the panel even when the
+            // value is unchanged, and this runs on every pixel of a resize drag.
+            static void Set(ScrollableControl c, int h)
+            {
+                var sz = new Size(0, h);
+                if (c.AutoScrollMinSize != sz) c.AutoScrollMinSize = sz;
+            }
             int leftH = _leftBottomY + S(50) + (_fanExpanded ? _fanExpandDelta : 0);
             if (_singleColumn)
             {
-                _contentPanel.AutoScrollMinSize = new Size(0, _stackOffset + _rightBottomY);
+                Set(_contentPanel, _stackOffset + _rightBottomY);
             }
             else
             {
-                _contentPanel.AutoScrollMinSize = new Size(0, leftH);
-                _contentPanelRight.AutoScrollMinSize = new Size(0, _rightBottomY);
+                Set(_contentPanel, leftH);
+                Set(_contentPanelRight, _rightBottomY);
             }
         }
 
@@ -2312,21 +2320,43 @@ namespace PredatorControlApp
                 finally { _isPluggedIn = confirmed; }
             }
 
-            _cpuTemp = _wmi.CpuTemp;
-
-            int cpuRpm = _wmi.CpuFanRpm;
-            int gpuRpm;
-
-            if (_isPluggedIn == true)
+            // Everything below talks to WMI / performance counters, which can
+            // take tens to hundreds of ms. Doing that on the UI thread froze the
+            // window (and any resize in progress, since the sizing loop still
+            // dispatches timer ticks), so sample on a worker and apply on UI.
+            if (_sampling || _isClosing || IsDisposed) return;
+            _sampling = true;
+            bool wantGpu = _isPluggedIn == true;
+            Task.Run(() =>
             {
-                _gpuTemp = _wmi.GpuTemp;
-                gpuRpm = _wmi.GpuFanRpm;
-            }
-            else
-            {
-                _gpuTemp = 0;
-                gpuRpm = 0;
-            }
+                int cpuTemp = 0, cpuRpm = 0, gpuTemp = 0, gpuRpm = 0;
+                try
+                {
+                    cpuTemp = _wmi.CpuTemp;
+                    cpuRpm = _wmi.CpuFanRpm;
+                    if (wantGpu) { gpuTemp = _wmi.GpuTemp; gpuRpm = _wmi.GpuFanRpm; }
+                    UpdateGpuProcessUsage();
+                }
+                catch (Exception ex) { Program.Report(ex, false); }
+
+                try
+                {
+                    BeginInvoke(new Action(() =>
+                    {
+                        try { ApplyTelemetry(cpuTemp, gpuTemp, cpuRpm, gpuRpm); }
+                        catch (Exception ex) { Program.Report(ex, false); }
+                        finally { _sampling = false; }
+                    }));
+                }
+                catch { _sampling = false; }   // window already gone
+            });
+        }
+
+        private void ApplyTelemetry(int cpuTemp, int gpuTemp, int cpuRpm, int gpuRpm)
+        {
+            if (_isClosing || IsDisposed) return;
+            _cpuTemp = cpuTemp;
+            _gpuTemp = gpuTemp;
 
             _lblCpuTemp.Text = _cpuTemp > 0 ? $"{_cpuTemp}°C" : "--°C";
             _lblGpuTemp.Text = _gpuTemp > 0 ? $"{_gpuTemp}°C" : "--°C";
@@ -2339,7 +2369,6 @@ namespace PredatorControlApp
             _cpuRpm = cpuRpm;
             _gpuRpm = gpuRpm;
             UpdateGpuBadge(_gpuTemp > 0);
-            UpdateGpuProcessUsage();
 
             string gpuTip = $"GPU: {(_gpuTemp > 0 ? $"{_gpuTemp}°C" : "N/A")}  {(gpuRpm > 0 ? $"{gpuRpm} RPM" : "-- RPM")}";
             if (!string.IsNullOrEmpty(_gpuProcessNames)) gpuTip += $" ({_gpuProcessNames})";

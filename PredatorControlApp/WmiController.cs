@@ -9,6 +9,9 @@ namespace PredatorControlApp
     {
         private ManagementObject? _cachedObj;
         private readonly object _lock = new();
+        // Serializes InvokeMethod on the shared AcerGamingFunction object so the
+        // background telemetry poll and UI-thread commands never overlap.
+        private readonly object _callLock = new();
 
         [DllImport("powrprof.dll")]
         private static extern uint PowerSetActiveOverlayScheme(Guid scheme);
@@ -237,6 +240,8 @@ namespace PredatorControlApp
 
         private (bool success, ulong output) SendCommand(string method, ulong input)
         {
+            lock (_callLock)
+            {
             try
             {
                 var obj = GetWmiObject();
@@ -254,9 +259,12 @@ namespace PredatorControlApp
                 return (false, 0);
             }
         }
+        }
 
         private bool SendLedCommand(byte[] payload)
         {
+            lock (_callLock)
+            {
             try
             {
                 var obj = GetWmiObject();
@@ -274,9 +282,12 @@ namespace PredatorControlApp
                 return false;
             }
         }
+        }
 
         private bool SendRgbKbCommand(uint zone, byte r, byte g, byte b)
         {
+            lock (_callLock)
+            {
             ulong payload = zone | ((ulong)r << 8) | ((ulong)g << 16) | ((ulong)b << 24);
             try
             {
@@ -295,9 +306,12 @@ namespace PredatorControlApp
                 return false;
             }
         }
+        }
 
         private int GetSensorReading(ulong sensorId)
         {
+            lock (_callLock)
+            {
             try
             {
                 var obj = GetWmiObject();
@@ -313,6 +327,7 @@ namespace PredatorControlApp
             catch (COMException) { InvalidateCache(); }
             catch { }
             return 0;
+        }
         }
 
         public void SetPowerMode(byte mode)
