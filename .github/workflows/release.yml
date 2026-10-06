@@ -5,7 +5,8 @@ name: Release
 #   git push origin v2026.10.6
 # A second release on the same day is v2026.10.6.1, then v2026.10.6.2, ...
 # The tag must match <Version> in PredatorControlApp.csproj (without the "v").
-# The tag message becomes the release notes shown in the app's update dialog.
+# The tag message becomes the release notes shown in the app's update dialog;
+# a plain tag (no -a) auto-generates them from the commit titles since the last tag.
 
 on:
   push:
@@ -58,9 +59,14 @@ jobs:
 
       - name: Release notes
         run: |
-          # Annotated tag message if there is one, else the commit subjects since the previous tag.
-          notes=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME")
-          if [ -z "$(echo "$notes" | tr -d '[:space:]')" ]; then
+          # Annotated tag (git tag -a ... -m "...")  -> its message is the notes.
+          # Plain tag (git tag vX)                  -> auto-generated: one line per commit
+          #                                            since the previous tag.
+          # A plain tag's "message" is just the tagged commit's message, so check the tag type.
+          if [ "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = "tag" ]; then
+            notes=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME")
+          fi
+          if [ -z "$(echo "${notes:-}" | tr -d '[:space:]')" ]; then
             prev=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
             if [ -n "$prev" ]; then range="$prev..$GITHUB_REF_NAME"; else range="-n 30 $GITHUB_REF_NAME"; fi
             notes=$(git log --no-merges --pretty='- %s' $range)
